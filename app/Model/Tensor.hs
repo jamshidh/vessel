@@ -1,7 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Model.Tensor (
-  Tensor(..),
+  GenericTensor(..),
   tensorToFloatArray,
   tensorToFloatList
   ) where
@@ -45,8 +45,8 @@ typeSize Q4_0 = 20
 typeSize F32 = 4
 --typeSize v = error $ "unknown numberElements: " ++ show v
 
-data Tensor =
-  Tensor {
+data GenericTensor =
+  GenericTensor {
     fType :: TensorType,
     dim_num_elems :: [Int32],
     name :: String,
@@ -54,8 +54,8 @@ data Tensor =
     elems :: BC.ByteString
   } deriving (Show)
 
-instance Format Tensor where
-  format Tensor{..} =
+instance Format GenericTensor where
+  format GenericTensor{..} =
     "Tensor (" ++ show fType ++ "): "
     ++ "[" ++ intercalate " ⨯ " (map show dim_num_elems) ++ "] "
     ++ name ++ "\n"
@@ -63,7 +63,7 @@ instance Format Tensor where
 
 
 
-instance Binary Tensor where
+instance Binary GenericTensor where
   get = do
     n_dims' <- getInt32le
     len' <- getInt32le
@@ -72,24 +72,24 @@ instance Binary Tensor where
     name' <- getByteString (fromIntegral len')
 --    elems' <- replicateM (fromIntegral (product dim_num_elems')) get
     elems' <- getByteString (typeSize ft * fromIntegral (product dim_num_elems')`div` blockSize ft)
-    return $ Tensor ft dim_num_elems' (BC.unpack name') elems'
+    return $ GenericTensor ft dim_num_elems' (BC.unpack name') elems'
   put = undefined
   
-tensorToFloatArray :: Tensor -> [[Float]]
-tensorToFloatArray t@Tensor{fType=F32} =
+tensorToFloatArray :: GenericTensor -> [[Float]]
+tensorToFloatArray t@GenericTensor{fType=F32} =
   let width = dim_num_elems t !! 0
       height = dim_num_elems t !! 1
   in map (\i -> V.toList $ bytesToFloats $ B.take (fromIntegral $ 4 * height * i) $ B.drop (fromIntegral $ 4 * height * (i+1)) $ elems t) [0..width-1]
-tensorToFloatArray t@Tensor{fType=Q4_0} = 
+tensorToFloatArray t@GenericTensor{fType=Q4_0} = 
   let width = dim_num_elems t !! 0
   in map (getRow t . fromIntegral) [0..width-1]
 
   
-tensorToFloatList :: Tensor -> [Float]
-tensorToFloatList Tensor{..} | length dim_num_elems /= 1 = error "You can't convert a matrix to a vector"
-tensorToFloatList t@Tensor{fType=F32} = -- TODO check size matches
+tensorToFloatList :: GenericTensor -> [Float]
+tensorToFloatList GenericTensor{..} | length dim_num_elems /= 1 = error "You can't convert a matrix to a vector"
+tensorToFloatList t@GenericTensor{fType=F32} = -- TODO check size matches
   V.toList $ bytesToFloats $ elems t
-tensorToFloatList t@Tensor{fType=Q4_0} = getRow t 0
+tensorToFloatList t@GenericTensor{fType=Q4_0} = getRow t 0
 
 
 splitInt8IntoNibbles :: Word8 -> [Int8]
@@ -112,13 +112,13 @@ splitIntoBlocks x | B.length x == 0 = []
 splitIntoBlocks x = first:splitIntoBlocks rest
   where (first, rest) = B.splitAt 20 x
 
-bytesForRow :: Tensor -> Int -> ByteString
-bytesForRow Tensor{..} i = B.take numberOfRowBytes $ B.drop (i*numberOfRowBytes) elems
+bytesForRow :: GenericTensor -> Int -> ByteString
+bytesForRow GenericTensor{..} i = B.take numberOfRowBytes $ B.drop (i*numberOfRowBytes) elems
   where rowHeight = fromIntegral $ dim_num_elems !! 0
         numberOfRowBytes = rowHeight * 20 `div` 32
   
 
-getRow :: Tensor -> Int -> [Float]
+getRow :: GenericTensor -> Int -> [Float]
 getRow tensor = concat . map blockToFloats . splitIntoBlocks . bytesForRow tensor
 
 

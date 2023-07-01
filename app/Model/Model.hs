@@ -31,7 +31,7 @@ data RawModel =
     n_rot :: Int32le,
     f16 :: Int32le,
     tokens' :: [Token],
-    tensors :: Map String Tensor
+    tensors :: Map String GenericTensor
   } deriving (Show)
 
 
@@ -96,7 +96,7 @@ rawModelToModel RawModel{..} =
     tokenEmbeddings = getFloatArray tensors "tok_embeddings.weight"
   }
 
-getLayer :: Map String Tensor -> Int -> Layer
+getLayer :: Map String GenericTensor -> Int -> Layer
 getLayer t i = Layer {
     layerNumber = i,
     attention_wk = getFloatArray t $ "layers." ++ show i ++ ".attention.wk.weight",
@@ -112,8 +112,8 @@ getLayer t i = Layer {
     }
 
 
-getFloatList :: Map String Tensor -> String -> [Float]
+getFloatList :: Map String GenericTensor -> String -> [Float]
 getFloatList t name = tensorToFloatList $ fromMaybe (error $ show name ++ " undefined in the model tensors: " ++ show (Map.keys t)) $ Map.lookup name t
 
-getFloatArray :: Map String Tensor -> String -> [[Float]]
+getFloatArray :: Map String GenericTensor -> String -> [[Float]]
 getFloatArray t name = tensorToFloatArray $ fromMaybe (error $ show name ++ " undefined in the model tensors: " ++ show (Map.keys t)) $ Map.lookup name t
