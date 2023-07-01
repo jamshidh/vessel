@@ -65,7 +65,7 @@ main = do
   writeIORef value inputLayer
 
 
-  forM_ (take 1 $ layers model) $ \layer -> do
+  forM_ (layers model) $ \layer -> do
     currentValue <- readIORef value
     let output = processLayer layer currentValue
     writeIORef value output

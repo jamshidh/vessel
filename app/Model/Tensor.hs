@@ -45,8 +45,8 @@ typeSize Q4_0 = 20
 typeSize F32 = 4
 --typeSize v = error $ "unknown numberElements: " ++ show v
 
-data GenericTensor =
-  GenericTensor {
+data Tensor =
+  Tensor {
     fType :: TensorType,
     dim_num_elems :: [Int32],
     name :: String,
