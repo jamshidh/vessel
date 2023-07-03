@@ -2,6 +2,8 @@
 
 module Model.Tensor (
   GenericTensor(..),
+  Matrix(..),
+  Vector(..),
   tensorToFloatArray,
   tensorToFloatList
   ) where
@@ -20,6 +22,7 @@ import Data.List (intercalate)
 import qualified Data.Vector.Storable as V
 
 import Format
+import Model.Float
 
 data TensorType =
   Q4_0
@@ -81,7 +84,7 @@ tensorToFloatArray t@GenericTensor{fType=F32} =
       height = dim_num_elems t !! 1
   in map (\i -> V.toList $ bytesToFloats $ B.take (fromIntegral $ 4 * height * i) $ B.drop (fromIntegral $ 4 * height * (i+1)) $ elems t) [0..width-1]
 tensorToFloatArray t@GenericTensor{fType=Q4_0} = 
-  let width = dim_num_elems t !! 0
+  let width = dim_num_elems t !! 1
   in map (getRow t . fromIntegral) [0..width-1]
 
   
@@ -125,4 +128,15 @@ getRow tensor = concat . map blockToFloats . splitIntoBlocks . bytesForRow tenso
 data Matrix = Matrix [[Float]] | QuantizedMatrix ByteString
 
 data Vector = Vector [Float] | QuantizedVector ByteString
+
+instance Format Vector where
+  format (Vector x) = "[" ++ show (length x) ++ "]\n"
+                      ++ show (take 10 x)
+
+instance Format Matrix where
+  format (Matrix x) = "[" ++ show (length x) ++ " x " ++ show (length $ head x) ++ "]\n"
+  --             ++ unlines (map (("    " ++) . show . take 5) (take 5 x))
+                      ++ unlines (map showLine (take 5 x))
+                      ++ (if length x > 5 then "    ....(etc)" else "")
+    where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take 5 $ v
 

@@ -15,7 +15,7 @@ import Format
 
 import Model.Float ()
 import Model.Model
---import Model.Tensor
+import Model.Tensor
 --import Model.Token
 
 import Rope
@@ -29,8 +29,9 @@ numberOfHeads = 32
 main :: IO ()
 main = do
   x <- BL.readFile "ggml-alpaca-7b-q4.bin"
+  let rawModel = decode x
   let model :: Model
-      model = rawModelToModel $ decode x
+      model = rawModelToModel rawModel
 
 {-
   let phrase = " Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
@@ -50,11 +51,11 @@ main = do
 
 
   
---  putStrLn $ format model
+--  putStrLn $ format rawModel
 
   let embd = [0,1,2,3]
 
-  let inputLayer = map (tokenEmbeddings model !!) embd
+  let inputLayer = Matrix $ map (unMatrix (tokenEmbeddings model) !!) embd
 
   value <- newIORef inputLayer
   
@@ -98,77 +99,135 @@ applyPipeline :: [(a->a)] -> a -> a
 applyPipeline = flip $ foldr ($)
 -}
 
-processLayer :: Layer -> [[Float]] -> [[Float]]
+processLayer :: Layer -> Matrix -> Matrix
 processLayer layer inputLayer =
   let normalized = meanNorm inputLayer
-      normalized2 = map (zipWith (*) $ attention_norm layer) normalized
+      --normalized2 = map (zipWith (*) $ attention_norm layer) normalized
+      normalized2 = replicateVector (Vector $ attention_norm layer) (width normalized) `simpleElementMul` normalized
       afterAttention = selfAttention layer normalized2
-      inputFF = afterAttention `matAdd` normalized2
+      inputFF = afterAttention `matAdd` inputLayer -- normalized2
       outputFF = feedForward layer inputFF
       outputLayer = outputFF `matAdd` inputFF
   in trace (
+    "normzlized = " ++ format normalized ++ "\n" ++
+    "normzlized2 = " ++ format normalized2 ++ "\n" ++
     "afterAttention = " ++ format afterAttention ++ "\n" ++
-    "inpFF = " ++ format inputFF
+    "inputFF = " ++ format inputFF ++ "\n" ++
+    "outputFF = " ++ format outputFF ++ "\n" ++
+    "outputLayer = " ++ format outputLayer
     )
      outputLayer
   
 
-selfAttention :: Layer -> [[Float]] -> [[Float]]
+selfAttention :: Layer -> Matrix -> Matrix
 selfAttention Layer{..} inputSA =
   let
       qCur = attention_wq `qMatMul` inputSA  -- [4x4096] = [??] * [??]
       kCur = attention_wk `qMatMul` inputSA
       vCur = attention_wv `qMatMul` inputSA
-      headSize = (length $ head kCur) `div` numberOfHeads
-      kBlobs = map embedPositions $ transpose $ map (chunksOf headSize) kCur
-      qBlobs = map embedPositions $ transpose $ map (chunksOf headSize) qCur
-      vBlobs = map embedPositions $ transpose $ map (chunksOf headSize) vCur
+      headSize = height kCur `div` numberOfHeads
+      kBlobs :: [Matrix]
+      kBlobs = map (Matrix . embedPositions) $ transpose $ map (chunksOf headSize) $ unMatrix kCur
+      qBlobs :: [Matrix]
+      qBlobs = map (Matrix . embedPositions) $ transpose $ map (chunksOf headSize) $ unMatrix qCur
+      vBlobs :: [Matrix]
+      vBlobs = map (Matrix . embedPositions) $ transpose $ map (chunksOf headSize) $ unMatrix vCur
+      kqs :: [Matrix]
       kqs = zipWith matMul kBlobs qBlobs -- 32 times: [4 x 4] = [4 x 128] * [4 x 128]
-      kqs_scaled = map (map (map (/sqrt 128.0))) kqs
+      kqs_scaled :: [Matrix]
+      kqs_scaled = map (matrixMap (/sqrt 128.0)) kqs
+      kqs_masked :: [Matrix]
       kqs_masked = map filterUpperDiagonal kqs_scaled
-      kqs_softmax = map (map softMax) kqs_masked
-      kqv = zipWith matMul (map transpose vBlobs) kqs_softmax -- 32 times: [128 x 4] = [4 x 128] * [4 x 4]
-      output = attention_wo `qMatMul` transpose (concat (map transpose kqv)) -- [??] = [4 x 4096] * [4096 x 4]
+      kqs_softmax :: [Matrix]
+      kqs_softmax = map (buildMatrixFromRows . map softMax . matrixRows) kqs_masked
+      kqv :: [Matrix]
+      kqv = zipWith matMul (map transposeMatrix vBlobs) kqs_softmax -- 32 times: [128 x 4] = [4 x 128] * [4 x 4]
+      output = attention_wo `qMatMul` transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
   in trace (
     "==========================\nattention_wk(" ++ show layerNumber ++ "): " ++ format attention_wk ++ "\n" ++
     "kCur = " ++ format kCur ++ "\n" ++
     "qCur = " ++ format qCur ++ "\n" ++
     "vCur = " ++ format vCur ++ "\n" ++
+    "kBlobs = " ++ format (head kBlobs) ++ "\n" ++
     "first mul: " ++ format (head kqs) ++ "\n" ++
     "first mul softmax: " ++ format (head kqs_softmax) ++ "\n" ++
     "first kqv: " ++ format (head kqv)
     )
     output
 
-feedForward :: Layer -> [[Float]] -> [[Float]]
-feedForward layer inpFF = 
+feedForward :: Layer -> Matrix -> Matrix
+feedForward Layer{..} inpFF = 
   let cur1 = meanNorm inpFF
-      cur2 = map (zipWith (*) (ffn_norm layer)) cur1
-      tmp = feed_forward_w3 layer `qMatMul` cur2
-      cur3 = feed_forward_w1 layer `qMatMul` cur2
-      cur4 = map (map silu) cur3
-      cur5 = zipWith (zipWith (*)) cur4 tmp
-      cur6 = feed_forward_w2 layer `qMatMul` cur5
-  in cur6
+      cur2 = replicateVector (Vector ffn_norm) (width cur1) `simpleElementMul` cur1           --map (zipWith (*) (ffn_norm layer)) cur1
+      tmp = feed_forward_w3 `qMatMul` cur2
+      cur3 = feed_forward_w1 `qMatMul` cur2
+      cur4 = matrixMap silu cur3
+      cur5 = cur4 `simpleElementMul` tmp
+      cur6 = feed_forward_w2 `qMatMul` cur5
+  in trace (
+    "feed_forward_w1: " ++ format feed_forward_w1 ++ "\n" ++
+    "feed_forward_w2: " ++ format feed_forward_w2 ++ "\n" ++
+    "feed_forward_w3: " ++ format feed_forward_w3 ++ "\n" ++
+    "cur3:  " ++ format cur3 ++ "\n" ++
+    "cur4:  " ++ format cur4 ++ "\n" ++
+    "cur5:  " ++ format cur5 ++ "\n" ++
+    "cur6:  " ++ format cur6
+    ) cur6
+
+unMatrix :: Matrix -> [[Float]]
+unMatrix (Matrix m) = m
+unMatrix (QuantizedMatrix _) = error "unMatrix not defined for QuantizedMatrix"
+
+matrixRows :: Matrix -> [Vector]
+matrixRows (Matrix rows) = map Vector rows
+matrixRows (QuantizedMatrix _) = error "matrixRows not defined for QuantizedMatrix"
 
 
+buildMatrixFromRows :: [Vector] -> Matrix
+buildMatrixFromRows rows =
+  Matrix $ [row | Vector row <- rows]
 
+matrixConcat :: [Matrix] -> Matrix
+matrixConcat matrixList = Matrix $ concat $ map unMatrix matrixList
 
 silu :: Float -> Float
-silu x = 1/(1+exp (-x))
+silu x = x/(1+exp (-x))
+
+replicateVector :: Vector -> Int -> Matrix
+replicateVector (Vector vals) i = Matrix $ replicate i vals
+replicateVector (QuantizedVector _) _ = error "replicateVector not defined for QuantizedVector"
+
+height :: Matrix -> Int
+height (Matrix m) = length $ head m
+height (QuantizedMatrix _) = error "height not defined for QuantizedMatrix"
+
+width :: Matrix -> Int
+width (Matrix m) = length m
+width (QuantizedMatrix _) = error "width not defined for QuantizedMatrix"
+
+transposeMatrix :: Matrix -> Matrix
+transposeMatrix (Matrix m) = Matrix $ transpose m
+transposeMatrix (QuantizedMatrix _) = error "transposeMatrix not defined for QuantizedMatrix"
+
+simpleElementMul :: Matrix -> Matrix -> Matrix
+simpleElementMul (Matrix x) (Matrix y) | (length x /= length y) || (length (head x) /= length (head y)) = error "mismsatched matrix sizes"
+simpleElementMul (Matrix x) (Matrix y) = Matrix $ zipWith (zipWith (*)) x y
+simpleElementMul _ _ = error "simpleElementMul not defined for QuantizedMatrix"
 
 
+matrixMap :: (Float -> Float) -> Matrix -> Matrix
+matrixMap f (Matrix m) = Matrix $ map (map f) m
+matrixMap _ (QuantizedMatrix _) = error "matrixMap not defined for QuantizedMatrix"
 
 
+softMax :: Vector -> Vector
+softMax (Vector theRow) = Vector . normalize . map (exp . (\v -> v - maximum theRow)) $ theRow
+softMax (QuantizedVector _) = error "softMax not defined for QuantizedVector"
 
+filterUpperDiagonal :: Matrix -> Matrix
+filterUpperDiagonal (Matrix theMatrix) = Matrix $ map (\(theRow, i) -> filterAfter i theRow) $ zip theMatrix [1..]
+filterUpperDiagonal (QuantizedMatrix _) = error "filterUpperDiagonal not defined for QuantizedMatrix"
 
-
-
-softMax :: [Float] -> [Float]
-softMax theRow = normalize . map (exp . (\v -> v - maximum theRow)) $ theRow
-
-filterUpperDiagonal :: [[Float]] -> [[Float]]
-filterUpperDiagonal theMatrix = map (\(theRow, i) -> filterAfter i theRow) $ zip theMatrix [1..]
 
 filterAfter :: Int -> [Float] -> [Float]
 filterAfter i theRow = take i theRow ++ replicate (length theRow - i) (-inf)
@@ -178,19 +237,23 @@ normalize :: [Float] -> [Float]
 normalize values = map (/sum values) values
 
 
-matAdd :: [[Float]] -> [[Float]] -> [[Float]]
-matAdd = zipWith vectAdd
+matAdd :: Matrix -> Matrix -> Matrix
+matAdd (Matrix x) (Matrix y) = Matrix $ zipWith vectAdd x y
+matAdd _ _ = error "matAdd not defined for QuantizedMatrix"
 
 vectAdd :: [Float] -> [Float] -> [Float]
 vectAdd = zipWith (+)
 
-qMatMul :: [[Float]] -> [[Float]] -> [[Float]]
-qMatMul x y =
-  map (\yRow -> map (\xCol -> xCol `quantize_dot` yRow) x) y
+qMatMul :: Matrix -> Matrix -> Matrix
+--qMatMul x y | height x /= height y = error $ "matrix heights don't match: " ++ show (height x) ++ " /= " ++ show (height y)
+qMatMul (Matrix x) (Matrix y) =
+  Matrix $ map (\yRow -> map (\xCol -> xCol `quantize_dot` yRow) x) y
+qMatMul _ _ = error "qMatMul not defined for QuantizedMatrix"
 
-matMul :: [[Float]] -> [[Float]] -> [[Float]]
-matMul x y =
-  map (\yRow -> map (\xCol -> xCol `dot` yRow) x) y
+matMul :: Matrix -> Matrix -> Matrix
+matMul (Matrix x) (Matrix y) =
+  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) x) y
+matMul _ _ = error "matMul not defined for QuantizedMatrix"
 
 dot :: [Float] -> [Float] -> Float
 dot x y | length x /= length y = error $ "dot product lengths do not match: " ++ show (length x) ++ "/=" ++ show (length y)
@@ -222,7 +285,8 @@ data QuantizedBlock = QuantizedBlock Float [Int16] deriving (Show)
 
 
 
-meanNorm :: [[Float]] -> [[Float]]
-meanNorm theFloats = 
+meanNorm :: Matrix -> Matrix
+meanNorm (Matrix theFloats) = 
   let scaleFactors = map ((1/) . sqrt . (+1e-5) . (/4096) . sum . map (\val -> val*val)) $ theFloats
-  in zipWith (\sf f -> map (sf*) f) scaleFactors theFloats
+  in Matrix $ zipWith (\sf f -> map (sf*) f) scaleFactors theFloats
+meanNorm (QuantizedMatrix _) = error "meanNorm not defined for QuantizedMatrix"

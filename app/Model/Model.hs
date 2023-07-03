@@ -67,22 +67,22 @@ instance Format RawModel where
 data Model = Model {
   tokens :: [Token],
   layers :: [Layer],
-  norm :: [Float],
-  output :: [[Float]],
-  tokenEmbeddings :: [[Float]]
+  norm :: Vector,
+  output :: Matrix,
+  tokenEmbeddings :: Matrix
   }
 
 data Layer =
   Layer {
     layerNumber :: Int,
-    attention_wk :: [[Float]],
-    attention_wo :: [[Float]],
-    attention_wq :: [[Float]],
-    attention_wv :: [[Float]],
+    attention_wk :: Matrix,
+    attention_wo :: Matrix,
+    attention_wq :: Matrix,
+    attention_wv :: Matrix,
     attention_norm :: [Float],
-    feed_forward_w1 :: [[Float]],
-    feed_forward_w2 :: [[Float]],
-    feed_forward_w3 :: [[Float]],
+    feed_forward_w1 :: Matrix,
+    feed_forward_w2 :: Matrix,
+    feed_forward_w3 :: Matrix,
     ffn_norm :: [Float]
   }
 
@@ -115,5 +115,5 @@ getLayer t i = Layer {
 getFloatList :: Map String GenericTensor -> String -> [Float]
 getFloatList t name = tensorToFloatList $ fromMaybe (error $ show name ++ " undefined in the model tensors: " ++ show (Map.keys t)) $ Map.lookup name t
 
-getFloatArray :: Map String GenericTensor -> String -> [[Float]]
-getFloatArray t name = tensorToFloatArray $ fromMaybe (error $ show name ++ " undefined in the model tensors: " ++ show (Map.keys t)) $ Map.lookup name t
+getFloatArray :: Map String GenericTensor -> String -> Matrix
+getFloatArray t name = Matrix $ tensorToFloatArray $ fromMaybe (error $ show name ++ " undefined in the model tensors: " ++ show (Map.keys t)) $ Map.lookup name t
