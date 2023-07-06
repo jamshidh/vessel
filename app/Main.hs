@@ -10,6 +10,7 @@ import Data.Int
 import Data.IORef
 import Data.List (transpose)
 import Data.List.Split
+import Numeric.Half
 
 import Format
 
@@ -163,7 +164,8 @@ feedForward Layer{..} inpFF =
       cur2 = replicateVector (Vector ffn_norm) (width cur1) `simpleElementMul` cur1           --map (zipWith (*) (ffn_norm layer)) cur1
       tmp = feed_forward_w3 `qMatMul` cur2
       cur3 = feed_forward_w1 `qMatMul` cur2
-      cur4 = matrixMap silu cur3
+--      cur4 = matrixMap silu cur3
+      cur4 = matrixMap (fromHalf . toHalf . silu . fromHalf . toHalf) cur3
       cur5 = cur4 `simpleElementMul` tmp
       cur6 = feed_forward_w2 `qMatMul` cur5
   in trace (
@@ -263,7 +265,7 @@ dot x y = sum $ zipWith (*) x y
 
 
 quantize_dot :: [Float] -> [Float] -> Float
-quantize_dot x y = sum $ zipWith (quantized_block_dot) (quantize y) (quantize x)
+quantize_dot x y = realToFrac $ sum (map realToFrac $ zipWith (quantized_block_dot) (quantize y) (quantize x) :: [Double]) 
 
 
 quantized_block_dot :: QuantizedBlock -> QuantizedBlock -> Float

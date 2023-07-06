@@ -31,5 +31,6 @@ executables:
       - bytestring
       - bytestring-trie
       - containers
+      - half
       - split
       - vector
