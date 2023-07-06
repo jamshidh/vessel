@@ -17,13 +17,15 @@ import Model.Float ()
 import Model.Model
 import Model.Tensor
 --import Model.Token
-
 import Rope
 
 import Debug.Trace
 
 numberOfHeads :: Int
 numberOfHeads = 32
+
+traceItem :: Format a => String -> a -> a
+traceItem name item = trace (name ++ ": " ++ format item) item
 
 
 main :: IO ()
@@ -101,7 +103,7 @@ applyPipeline = flip $ foldr ($)
 
 processLayer :: Layer -> Matrix -> Matrix
 processLayer layer inputLayer =
-  let normalized = meanNorm inputLayer
+  let normalized = traceItem "normalized" $ meanNorm inputLayer
       --normalized2 = map (zipWith (*) $ attention_norm layer) normalized
       normalized2 = replicateVector (Vector $ attention_norm layer) (width normalized) `simpleElementMul` normalized
       afterAttention = selfAttention layer normalized2
@@ -286,7 +288,9 @@ data QuantizedBlock = QuantizedBlock Float [Int16] deriving (Show)
 
 
 meanNorm :: Matrix -> Matrix
-meanNorm (Matrix theFloats) = 
-  let scaleFactors = map ((1/) . sqrt . (+1e-5) . (/4096) . sum . map (\val -> val*val)) $ theFloats
-  in Matrix $ zipWith (\sf f -> map (sf*) f) scaleFactors theFloats
+meanNorm m@(Matrix theFloats) = 
+  let squares = map ((map (**2))) theFloats
+      squaresAsDoubles = map (map realToFrac) squares :: [[Double]]
+      scaleFactors = map ((1/) . sqrt . (+1e-5)) $ map ((/realToFrac (height m)) . sum) squaresAsDoubles
+  in Matrix $ zipWith (\sf f -> map (sf*) f) (map realToFrac scaleFactors) theFloats
 meanNorm (QuantizedMatrix _) = error "meanNorm not defined for QuantizedMatrix"
