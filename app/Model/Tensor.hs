@@ -4,8 +4,8 @@ module Model.Tensor (
   GenericTensor(..),
   Matrix(..),
   Vector(..),
-  tensorToFloatArray,
-  tensorToFloatList
+  tensorToMatrix,
+  tensorToVector
   ) where
 
 import Control.Monad
@@ -93,6 +93,14 @@ tensorToFloatList GenericTensor{..} | length dim_num_elems /= 1 = error "You can
 tensorToFloatList t@GenericTensor{fType=F32} = -- TODO check size matches
   V.toList $ bytesToFloats $ elems t
 tensorToFloatList t@GenericTensor{fType=Q4_0} = getRow t 0
+
+
+tensorToMatrix :: GenericTensor -> Matrix
+tensorToMatrix = Matrix . tensorToFloatArray
+
+tensorToVector :: GenericTensor -> Vector
+tensorToVector = Vector . tensorToFloatList 
+
 
 
 splitInt8IntoNibbles :: Word8 -> [Int8]

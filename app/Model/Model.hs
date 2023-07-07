@@ -79,41 +79,41 @@ data Layer =
     attention_wo :: Matrix,
     attention_wq :: Matrix,
     attention_wv :: Matrix,
-    attention_norm :: [Float],
+    attention_norm :: Vector,
     feed_forward_w1 :: Matrix,
     feed_forward_w2 :: Matrix,
     feed_forward_w3 :: Matrix,
-    ffn_norm :: [Float]
+    ffn_norm :: Vector
   }
 
 rawModelToModel :: RawModel -> Model
-rawModelToModel RawModel{..} =
+rawModelToModel rawModel =
   Model {
-    tokens = tokens',
-    layers = map (getLayer tensors) [0..fromIntegral (n_layer-1)],
+    tokens = tokens' rawModel,
+    layers = map (getLayer rawModel) [0..fromIntegral (n_layer rawModel-1)],
     norm = error "norm undefined",
     output = error "output undefined",
-    tokenEmbeddings = getFloatArray tensors "tok_embeddings.weight"
+    tokenEmbeddings = getModelMatrix rawModel "tok_embeddings.weight"
   }
 
-getLayer :: Map String GenericTensor -> Int -> Layer
-getLayer t i = Layer {
+getLayer :: RawModel -> Int -> Layer
+getLayer rawModel i = Layer {
     layerNumber = i,
-    attention_wk = getFloatArray t $ "layers." ++ show i ++ ".attention.wk.weight",
-    attention_wo = getFloatArray t $ "layers." ++ show i ++ ".attention.wo.weight",
-    attention_wq =  getFloatArray t $ "layers." ++ show i ++ ".attention.wq.weight",
+    attention_wk = getModelMatrix rawModel $ "layers." ++ show i ++ ".attention.wk.weight",
+    attention_wo = getModelMatrix rawModel $ "layers." ++ show i ++ ".attention.wo.weight",
+    attention_wq =  getModelMatrix rawModel $ "layers." ++ show i ++ ".attention.wq.weight",
     --attention_wq = error $ show (fmap (B16.encode . BC.take 100 . elems) $ Map.lookup "layers.0.attention.wq.weight" t),
-    attention_wv = getFloatArray t $ "layers." ++ show i ++ ".attention.wv.weight",
-    attention_norm = getFloatList t $ "layers." ++ show i ++ ".attention_norm.weight",
-    feed_forward_w1 = getFloatArray t $ "layers." ++ show i ++ ".feed_forward.w1.weight",
-    feed_forward_w2 = getFloatArray t $ "layers." ++ show i ++ ".feed_forward.w2.weight",
-    feed_forward_w3 = getFloatArray t $ "layers." ++ show i ++ ".feed_forward.w3.weight",
-    ffn_norm = getFloatList t $ "layers." ++ show i ++ ".ffn_norm.weight"
+    attention_wv = getModelMatrix rawModel $ "layers." ++ show i ++ ".attention.wv.weight",
+    attention_norm = getModelVector rawModel $ "layers." ++ show i ++ ".attention_norm.weight",
+    feed_forward_w1 = getModelMatrix rawModel $ "layers." ++ show i ++ ".feed_forward.w1.weight",
+    feed_forward_w2 = getModelMatrix rawModel $ "layers." ++ show i ++ ".feed_forward.w2.weight",
+    feed_forward_w3 = getModelMatrix rawModel $ "layers." ++ show i ++ ".feed_forward.w3.weight",
+    ffn_norm = getModelVector rawModel $ "layers." ++ show i ++ ".ffn_norm.weight"
     }
 
 
-getFloatList :: Map String GenericTensor -> String -> [Float]
-getFloatList t name = tensorToFloatList $ fromMaybe (error $ show name ++ " undefined in the model tensors: " ++ show (Map.keys t)) $ Map.lookup name t
+getModelVector :: RawModel -> String -> Vector
+getModelVector RawModel{..} name = tensorToVector $ fromMaybe (error $ show name ++ " undefined in the model tensors: " ++ show (Map.keys tensors)) $ Map.lookup name tensors
 
-getFloatArray :: Map String GenericTensor -> String -> Matrix
-getFloatArray t name = Matrix $ tensorToFloatArray $ fromMaybe (error $ show name ++ " undefined in the model tensors: " ++ show (Map.keys t)) $ Map.lookup name t
+getModelMatrix :: RawModel -> String -> Matrix
+getModelMatrix RawModel{..} name = tensorToMatrix $ fromMaybe (error $ show name ++ " undefined in the model tensors: " ++ show (Map.keys tensors)) $ Map.lookup name tensors

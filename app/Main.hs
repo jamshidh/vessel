@@ -106,7 +106,7 @@ processLayer :: Layer -> Matrix -> Matrix
 processLayer layer inputLayer =
   let normalized = traceItem "normalized" $ meanNorm inputLayer
       --normalized2 = map (zipWith (*) $ attention_norm layer) normalized
-      normalized2 = replicateVector (Vector $ attention_norm layer) (width normalized) `simpleElementMul` normalized
+      normalized2 = replicateVector (attention_norm layer) (width normalized) `simpleElementMul` normalized
       afterAttention = selfAttention layer normalized2
       inputFF = afterAttention `matAdd` inputLayer -- normalized2
       outputFF = feedForward layer inputFF
@@ -161,7 +161,7 @@ selfAttention Layer{..} inputSA =
 feedForward :: Layer -> Matrix -> Matrix
 feedForward Layer{..} inpFF = 
   let cur1 = meanNorm inpFF
-      cur2 = replicateVector (Vector ffn_norm) (width cur1) `simpleElementMul` cur1           --map (zipWith (*) (ffn_norm layer)) cur1
+      cur2 = replicateVector ffn_norm (width cur1) `simpleElementMul` cur1           --map (zipWith (*) (ffn_norm layer)) cur1
       tmp = feed_forward_w3 `qMatMul` cur2
       cur3 = feed_forward_w1 `qMatMul` cur2
 --      cur4 = matrixMap silu cur3
