@@ -1,5 +1,7 @@
 
-module Rope where
+module Rope (
+  embedPositions
+  ) where
 
 import Data.List.Split
 
@@ -14,7 +16,11 @@ embedPositions theArray =
     indexToTheta :: Int -> Float
     indexToTheta index = 10000.0 ** (-(fromIntegral index::Float)/fromIntegral (length $ head theArray))
     pairTuples :: [a] -> [(a, a)]
-    pairTuples = map (\[x, y] -> (x, y)) . chunksOf 2
+    pairTuples = map listTo2Tuple . chunksOf 2
+      where listTo2Tuple items =
+              case items of
+                [x, y] -> (x, y)
+                _ -> error "pairTuples called with an odd number of items"
     unpairTuples :: [(a, a)] -> [a]
     unpairTuples = concat . map (\(x, y) -> [x, y])
 
