@@ -5,7 +5,11 @@ module Model.Tensor (
   Matrix(..),
   Vector(..),
   tensorToMatrix,
-  tensorToVector
+  tensorToVector,
+  getRow,
+  bytesToFloats,
+  splitIntoBlocks,
+  splitInt8IntoNibbles
   ) where
 
 import Control.Monad
@@ -22,7 +26,7 @@ import Data.List (intercalate)
 import qualified Data.Vector.Storable as V
 
 import Format
-import Model.Float
+import Model.Float ()
 
 data TensorType =
   Q4_0
@@ -77,29 +81,27 @@ instance Binary GenericTensor where
     elems' <- getByteString (typeSize ft * fromIntegral (product dim_num_elems')`div` blockSize ft)
     return $ GenericTensor ft dim_num_elems' (BC.unpack name') elems'
   put = undefined
-  
-tensorToFloatArray :: GenericTensor -> [[Float]]
-tensorToFloatArray t@GenericTensor{fType=F32} =
-  let width = dim_num_elems t !! 0
-      height = dim_num_elems t !! 1
-  in map (\i -> V.toList $ bytesToFloats $ B.take (fromIntegral $ 4 * height * i) $ B.drop (fromIntegral $ 4 * height * (i+1)) $ elems t) [0..width-1]
-tensorToFloatArray t@GenericTensor{fType=Q4_0} = 
-  let width = dim_num_elems t !! 1
-  in map (getRow t . fromIntegral) [0..width-1]
-
-  
-tensorToFloatList :: GenericTensor -> [Float]
-tensorToFloatList GenericTensor{..} | length dim_num_elems /= 1 = error "You can't convert a matrix to a vector"
-tensorToFloatList t@GenericTensor{fType=F32} = -- TODO check size matches
-  V.toList $ bytesToFloats $ elems t
-tensorToFloatList t@GenericTensor{fType=Q4_0} = getRow t 0
-
 
 tensorToMatrix :: GenericTensor -> Matrix
-tensorToMatrix = Matrix . tensorToFloatArray
+tensorToMatrix t@GenericTensor{fType=F32} =
+  let width = dim_num_elems t !! 0
+      height = dim_num_elems t !! 1
+  in Matrix $ map (\i -> V.toList $ bytesToFloats $ B.take (fromIntegral $ 4 * height * i) $ B.drop (fromIntegral $ 4 * height * (i+1)) $ elems t) [0..width-1]
+tensorToMatrix t@GenericTensor{fType=Q4_0} = 
+  let width = dim_num_elems t !! 1
+      height = dim_num_elems t !! 0
+  in QuantizedMatrix (elems t) (fromIntegral height) (fromIntegral width)
+
+
+
 
 tensorToVector :: GenericTensor -> Vector
-tensorToVector = Vector . tensorToFloatList 
+tensorToVector GenericTensor{..} | length dim_num_elems /= 1 = error "You can't convert a matrix to a vector"
+tensorToVector t@GenericTensor{fType=F32} = -- TODO check size matches
+  Vector $ V.toList $ bytesToFloats $ elems t
+tensorToVector t@GenericTensor{fType=Q4_0} = QuantizedVector $ elems t -- $ getRow t 0
+
+--tensorToVector = Vector . tensorToFloatList 
 
 
 
@@ -123,23 +125,30 @@ splitIntoBlocks x | B.length x == 0 = []
 splitIntoBlocks x = first:splitIntoBlocks rest
   where (first, rest) = B.splitAt 20 x
 
-bytesForRow :: GenericTensor -> Int -> ByteString
-bytesForRow GenericTensor{..} i = B.take numberOfRowBytes $ B.drop (i*numberOfRowBytes) elems
-  where rowHeight = fromIntegral $ dim_num_elems !! 0
-        numberOfRowBytes = rowHeight * 20 `div` 32
-  
-
-getRow :: GenericTensor -> Int -> [Float]
-getRow tensor = concat . map blockToFloats . splitIntoBlocks . bytesForRow tensor
+bytesForRow :: Matrix -> Int -> ByteString
+bytesForRow QuantizedMatrix{..} i = B.take numberOfRowBytes $ B.drop (i*numberOfRowBytes) matrixData
+  where numberOfRowBytes = matrixHeight * 20 `div` 32
+bytesForRow Matrix{} _ = error "bytesForRow only implemented for Quantized matrix"
 
 
-data Matrix = Matrix [[Float]] | QuantizedMatrix ByteString
+
+getRow :: Matrix -> Int -> Vector
+getRow m@QuantizedMatrix{} = Vector . concat . map blockToFloats . splitIntoBlocks . bytesForRow m
+getRow _ = error "getRow not definted for non-quantized Matrix"
+
+data Matrix = Matrix [[Float]] |
+  QuantizedMatrix {
+    matrixData ::ByteString,
+    matrixHeight :: Int,
+    matrixWidth :: Int
+  }
 
 data Vector = Vector [Float] | QuantizedVector ByteString
 
 instance Format Vector where
   format (Vector x) = "[" ++ show (length x) ++ "]\n"
                       ++ show (take 10 x)
+  format (QuantizedVector theData) = "QuantizedVector [" ++ show (B.length theData * 32 `div` 20) ++ "]"
 
 instance Format Matrix where
   format (Matrix x) = "[" ++ show (length x) ++ " x " ++ show (length $ head x) ++ "]\n"
@@ -147,4 +156,5 @@ instance Format Matrix where
                       ++ unlines (map showLine (take 5 x))
                       ++ (if length x > 5 then "    ....(etc)" else "")
     where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take 5 $ v
+  format QuantizedMatrix{..} = "QuantizedMatrix [" ++ show matrixHeight ++ " x " ++ show matrixWidth ++ "]"
 

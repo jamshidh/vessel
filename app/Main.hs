@@ -5,11 +5,14 @@ module Main (main) where
 
 import Control.Monad
 import Data.Binary
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import Data.Int
 import Data.IORef
 import Data.List (transpose)
 import Data.List.Split
+import qualified Data.Vector.Storable as V
 import Numeric.Half
 
 import Format
@@ -58,7 +61,7 @@ main = do
 
   let embd = [0,1,2,3]
 
-  let inputLayer = Matrix $ map (unMatrix (tokenEmbeddings model) !!) embd
+  let inputLayer = vectorsToMatrix $ map (getRow $ tokenEmbeddings model) embd
 
   value <- newIORef inputLayer
   
@@ -94,8 +97,18 @@ main = do
   putStrLn $ "output' = " ++ format output'
 -}
 
+vectorsToMatrix :: [Vector] -> Matrix
+vectorsToMatrix vectors = Matrix [ v | Vector v <- vectors ]
 
-  
+matrixVectors :: Matrix -> [Vector]
+matrixVectors (Matrix vectors) = map Vector vectors
+matrixVectors QuantizedMatrix{..} = map QuantizedVector $ byteStringChunksOf (matrixHeight * 20 `div` 32) matrixData
+  where
+    byteStringChunksOf :: Int -> ByteString -> [ByteString]
+    byteStringChunksOf _ s | B.length s == 0 = []
+    byteStringChunksOf i s | B.length s < i = error $ "string length not a multiple of i: remainder = " ++ show (B.length s)
+    byteStringChunksOf i s = first:byteStringChunksOf i rest
+      where (first, rest) = B.splitAt i s
 
 {-
 applyPipeline :: [(a->a)] -> a -> a
@@ -125,9 +138,9 @@ processLayer layer inputLayer =
 selfAttention :: Layer -> Matrix -> Matrix
 selfAttention Layer{..} inputSA =
   let
-      qCur = attention_wq `qMatMul` inputSA  -- [4x4096] = [??] * [??]
-      kCur = attention_wk `qMatMul` inputSA
-      vCur = attention_wv `qMatMul` inputSA
+      qCur = attention_wq `matMul` inputSA  -- [4x4096] = [??] * [??]
+      kCur = attention_wk `matMul` inputSA
+      vCur = attention_wv `matMul` inputSA
       headSize = height kCur `div` numberOfHeads
       kBlobs :: [Matrix]
       kBlobs = map (Matrix . embedPositions) $ transpose $ map (chunksOf headSize) $ unMatrix kCur
@@ -145,7 +158,7 @@ selfAttention Layer{..} inputSA =
       kqs_softmax = map (buildMatrixFromRows . map softMax . matrixRows) kqs_masked
       kqv :: [Matrix]
       kqv = zipWith matMul (map transposeMatrix vBlobs) kqs_softmax -- 32 times: [128 x 4] = [4 x 128] * [4 x 4]
-      output = attention_wo `qMatMul` transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
+      output = attention_wo `matMul` transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
   in trace (
     "==========================\nattention_wk(" ++ show layerNumber ++ "): " ++ format attention_wk ++ "\n" ++
     "kCur = " ++ format kCur ++ "\n" ++
@@ -162,12 +175,12 @@ feedForward :: Layer -> Matrix -> Matrix
 feedForward Layer{..} inpFF = 
   let cur1 = meanNorm inpFF
       cur2 = replicateVector ffn_norm (width cur1) `simpleElementMul` cur1           --map (zipWith (*) (ffn_norm layer)) cur1
-      tmp = feed_forward_w3 `qMatMul` cur2
-      cur3 = feed_forward_w1 `qMatMul` cur2
+      tmp = feed_forward_w3 `matMul` cur2
+      cur3 = feed_forward_w1 `matMul` cur2
 --      cur4 = matrixMap silu cur3
       cur4 = matrixMap (fromHalf . toHalf . silu . fromHalf . toHalf) cur3
       cur5 = cur4 `simpleElementMul` tmp
-      cur6 = feed_forward_w2 `qMatMul` cur5
+      cur6 = feed_forward_w2 `matMul` cur5
   in trace (
     "feed_forward_w1: " ++ format feed_forward_w1 ++ "\n" ++
     "feed_forward_w2: " ++ format feed_forward_w2 ++ "\n" ++
@@ -180,11 +193,11 @@ feedForward Layer{..} inpFF =
 
 unMatrix :: Matrix -> [[Float]]
 unMatrix (Matrix m) = m
-unMatrix (QuantizedMatrix _) = error "unMatrix not defined for QuantizedMatrix"
+unMatrix (QuantizedMatrix _ _ _) = error "unMatrix not defined for QuantizedMatrix"
 
 matrixRows :: Matrix -> [Vector]
 matrixRows (Matrix rows) = map Vector rows
-matrixRows (QuantizedMatrix _) = error "matrixRows not defined for QuantizedMatrix"
+matrixRows (QuantizedMatrix _ _ _) = error "matrixRows not defined for QuantizedMatrix"
 
 
 buildMatrixFromRows :: [Vector] -> Matrix
@@ -203,15 +216,15 @@ replicateVector (QuantizedVector _) _ = error "replicateVector not defined for Q
 
 height :: Matrix -> Int
 height (Matrix m) = length $ head m
-height (QuantizedMatrix _) = error "height not defined for QuantizedMatrix"
+height QuantizedMatrix{..} = matrixHeight
 
 width :: Matrix -> Int
 width (Matrix m) = length m
-width (QuantizedMatrix _) = error "width not defined for QuantizedMatrix"
+width QuantizedMatrix{..} = matrixWidth
 
 transposeMatrix :: Matrix -> Matrix
 transposeMatrix (Matrix m) = Matrix $ transpose m
-transposeMatrix (QuantizedMatrix _) = error "transposeMatrix not defined for QuantizedMatrix"
+transposeMatrix (QuantizedMatrix _ _ _) = error "transposeMatrix not defined for QuantizedMatrix"
 
 simpleElementMul :: Matrix -> Matrix -> Matrix
 simpleElementMul (Matrix x) (Matrix y) | (length x /= length y) || (length (head x) /= length (head y)) = error "mismsatched matrix sizes"
@@ -221,7 +234,7 @@ simpleElementMul _ _ = error "simpleElementMul not defined for QuantizedMatrix"
 
 matrixMap :: (Float -> Float) -> Matrix -> Matrix
 matrixMap f (Matrix m) = Matrix $ map (map f) m
-matrixMap _ (QuantizedMatrix _) = error "matrixMap not defined for QuantizedMatrix"
+matrixMap _ (QuantizedMatrix _ _ _) = error "matrixMap not defined for QuantizedMatrix"
 
 
 softMax :: Vector -> Vector
@@ -230,7 +243,7 @@ softMax (QuantizedVector _) = error "softMax not defined for QuantizedVector"
 
 filterUpperDiagonal :: Matrix -> Matrix
 filterUpperDiagonal (Matrix theMatrix) = Matrix $ map (\(theRow, i) -> filterAfter i theRow) $ zip theMatrix [1..]
-filterUpperDiagonal (QuantizedMatrix _) = error "filterUpperDiagonal not defined for QuantizedMatrix"
+filterUpperDiagonal (QuantizedMatrix _ _ _) = error "filterUpperDiagonal not defined for QuantizedMatrix"
 
 
 filterAfter :: Int -> [Float] -> [Float]
@@ -248,25 +261,25 @@ matAdd _ _ = error "matAdd not defined for QuantizedMatrix"
 vectAdd :: [Float] -> [Float] -> [Float]
 vectAdd = zipWith (+)
 
-qMatMul :: Matrix -> Matrix -> Matrix
---qMatMul x y | height x /= height y = error $ "matrix heights don't match: " ++ show (height x) ++ " /= " ++ show (height y)
-qMatMul (Matrix x) (Matrix y) =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `quantize_dot` yRow) x) y
-qMatMul _ _ = error "qMatMul not defined for QuantizedMatrix"
-
 matMul :: Matrix -> Matrix -> Matrix
-matMul (Matrix x) (Matrix y) =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) x) y
-matMul _ _ = error "matMul not defined for QuantizedMatrix"
+--matMul x y | trace ("multiplying: [" ++ show (height x) ++ "x" ++ show (width x) ++ "] * [" ++ show (height y) ++ "x" ++ show (width y) ++ "], num ops = " ++ show (width x * height y * height x)) False = undefined
+matMul x y | height x /= height y = error $ "matrix heights don't match: " ++ show (height x) ++ " /= " ++ show (height y)
+matMul x@(Matrix _) y@(Matrix _) =
+  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
+matMul x@(QuantizedMatrix _ _ _) y@(Matrix _) =
+  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
+matMul _ _ = error "unsupported case called in matMul"
 
-dot :: [Float] -> [Float] -> Float
-dot x y | length x /= length y = error $ "dot product lengths do not match: " ++ show (length x) ++ "/=" ++ show (length y)
-dot x y = sum $ zipWith (*) x y
+dot :: Vector -> Vector -> Float
+dot x y | vectorLength x /= vectorLength y = error $ "dot product lengths do not match: " ++ show (vectorLength x) ++ "/=" ++ show (vectorLength y)
+dot (Vector x) (Vector y) = sum $ zipWith (*) x y
+dot (QuantizedVector x) (Vector y) = sum $ zipWith quantized_block_dot (splitIntoQuantizedBlocks x) (quantize y)
+dot (QuantizedVector x) (QuantizedVector y) = sum $ zipWith quantized_block_dot (splitIntoQuantizedBlocks x) (splitIntoQuantizedBlocks y)
+dot (Vector x) (QuantizedVector y) = sum $ zipWith quantized_block_dot (quantize x) (splitIntoQuantizedBlocks y)
 
-
-quantize_dot :: [Float] -> [Float] -> Float
-quantize_dot x y = realToFrac $ sum (map realToFrac $ zipWith (quantized_block_dot) (quantize y) (quantize x) :: [Double]) 
-
+vectorLength :: Vector -> Int
+vectorLength (Vector elems) = length elems
+vectorLength (QuantizedVector elems) = B.length elems * 32 `div` 20
 
 quantized_block_dot :: QuantizedBlock -> QuantizedBlock -> Float
 quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) =
@@ -287,6 +300,15 @@ quantize_single_block floats =
 
 data QuantizedBlock = QuantizedBlock Float [Int16] deriving (Show)
 
+splitIntoQuantizedBlocks :: ByteString -> [QuantizedBlock]
+splitIntoQuantizedBlocks theData = map parseQuantizedBlock $ splitIntoBlocks theData
+  where
+    parseQuantizedBlock :: ByteString -> QuantizedBlock
+    parseQuantizedBlock theBlock = 
+      let (dBytes, bytes) = B.splitAt 4 theBlock
+          d = bytesToFloats dBytes
+          theNibbles = concat $ map splitInt8IntoNibbles $ B.unpack bytes
+      in QuantizedBlock (V.head d) $ map fromIntegral theNibbles
 
 
 meanNorm :: Matrix -> Matrix
@@ -295,4 +317,4 @@ meanNorm m@(Matrix theFloats) =
       squaresAsDoubles = map (map realToFrac) squares :: [[Double]]
       scaleFactors = map ((1/) . sqrt . (+1e-5)) $ map ((/realToFrac (height m)) . sum) squaresAsDoubles
   in Matrix $ zipWith (\sf f -> map (sf*) f) (map realToFrac scaleFactors) theFloats
-meanNorm (QuantizedMatrix _) = error "meanNorm not defined for QuantizedMatrix"
+meanNorm (QuantizedMatrix _ _ _) = error "meanNorm not defined for QuantizedMatrix"
