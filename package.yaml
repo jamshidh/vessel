@@ -19,8 +19,6 @@ executables:
   vessel-runner:
     main:                Main.hs
     source-dirs:         app
-    exposed-modules:
-      - Model.Tensor
     ghc-options:
     - -threaded
     - -rtsopts
