@@ -5,14 +5,10 @@ module Main (main) where
 
 import Control.Monad
 import Data.Binary
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
-import Data.Int
 import Data.IORef
 import Data.List (transpose)
 import Data.List.Split
-import qualified Data.Vector.Storable as V
 import Numeric.Half
 
 import Format
@@ -34,6 +30,12 @@ traceItem name item = trace (name ++ ": " ++ format item) item
 
 main :: IO ()
 main = do
+  --let size = 48000000
+  --putStrLn $ format $ QuantizedMatrix [quantize $ take size [1..]] size 1 `matMul` Matrix [take size [1..]]
+  doit
+
+doit :: IO ()
+doit = do
   x <- BL.readFile "ggml-alpaca-7b-q4.bin"
   let rawModel = decode x
   let model :: Model
@@ -97,18 +99,17 @@ main = do
   putStrLn $ "output' = " ++ format output'
 -}
 
+
 vectorsToMatrix :: [Vector] -> Matrix
-vectorsToMatrix vectors = Matrix [ v | Vector v <- vectors ]
+vectorsToMatrix vectors = 
+  case ([ v | Vector v <- vectors ], [ v | QuantizedVector v <- vectors ]) of
+    (vectors', []) -> Matrix vectors'
+    ([], quantizedVectors) -> QuantizedMatrix quantizedVectors (vectorLength (head vectors) * 32) (length vectors)
+    _ -> error "error calling vectorsToMatrix: list of Vectors contains mixed quantized and non-quantized values."
 
 matrixVectors :: Matrix -> [Vector]
 matrixVectors (Matrix vectors) = map Vector vectors
-matrixVectors QuantizedMatrix{..} = map QuantizedVector $ byteStringChunksOf (matrixHeight * 20 `div` 32) matrixData
-  where
-    byteStringChunksOf :: Int -> ByteString -> [ByteString]
-    byteStringChunksOf _ s | B.length s == 0 = []
-    byteStringChunksOf i s | B.length s < i = error $ "string length not a multiple of i: remainder = " ++ show (B.length s)
-    byteStringChunksOf i s = first:byteStringChunksOf i rest
-      where (first, rest) = B.splitAt i s
+matrixVectors QuantizedMatrix{..} = map QuantizedVector matrixData
 
 {-
 applyPipeline :: [(a->a)] -> a -> a
@@ -215,6 +216,7 @@ replicateVector (Vector vals) i = Matrix $ replicate i vals
 replicateVector (QuantizedVector _) _ = error "replicateVector not defined for QuantizedVector"
 
 height :: Matrix -> Int
+height (Matrix []) = 0
 height (Matrix m) = length $ head m
 height QuantizedMatrix{..} = matrixHeight
 
@@ -227,7 +229,7 @@ transposeMatrix (Matrix m) = Matrix $ transpose m
 transposeMatrix (QuantizedMatrix _ _ _) = error "transposeMatrix not defined for QuantizedMatrix"
 
 simpleElementMul :: Matrix -> Matrix -> Matrix
-simpleElementMul (Matrix x) (Matrix y) | (length x /= length y) || (length (head x) /= length (head y)) = error "mismsatched matrix sizes"
+simpleElementMul x y | (height x /= height y) || (width x /= width y) = error "mismsatched matrix sizes"
 simpleElementMul (Matrix x) (Matrix y) = Matrix $ zipWith (zipWith (*)) x y
 simpleElementMul _ _ = error "simpleElementMul not defined for QuantizedMatrix"
 
@@ -260,9 +262,19 @@ matAdd _ _ = error "matAdd not defined for QuantizedMatrix"
 
 vectAdd :: [Float] -> [Float] -> [Float]
 vectAdd = zipWith (+)
+{-
+formatShortMatrix :: Matrix -> String
+formatShortMatrix m =
+  (
+    case m of
+      (Matrix _) -> ""
+      (QuantizedMatrix _ _ _) -> "Q"
+  )
+  ++ "[" ++ show (height m) ++ "x" ++ show (width m) ++ "]"
+-}
 
 matMul :: Matrix -> Matrix -> Matrix
---matMul x y | trace ("multiplying: [" ++ show (height x) ++ "x" ++ show (width x) ++ "] * [" ++ show (height y) ++ "x" ++ show (width y) ++ "], num ops = " ++ show (width x * height y * height x)) False = undefined
+--matMul x y | trace ("multiplying: " ++ formatShortMatrix x ++ " * " ++ formatShortMatrix y ++ ", num ops = " ++ show (height x * width x * width y)) False = undefined
 matMul x y | height x /= height y = error $ "matrix heights don't match: " ++ show (height x) ++ " /= " ++ show (height y)
 matMul x@(Matrix _) y@(Matrix _) =
   Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
@@ -271,25 +283,30 @@ matMul x@(QuantizedMatrix _ _ _) y@(Matrix _) =
 matMul _ _ = error "unsupported case called in matMul"
 
 dot :: Vector -> Vector -> Float
+--dot x y | trace ("dot, length x = " ++ show (vectorLength x) ++ ", length y = " ++ show (vectorLength y)) False = undefined
 dot x y | vectorLength x /= vectorLength y = error $ "dot product lengths do not match: " ++ show (vectorLength x) ++ "/=" ++ show (vectorLength y)
 dot (Vector x) (Vector y) = sum $ zipWith (*) x y
-dot (QuantizedVector x) (Vector y) = sum $ zipWith quantized_block_dot (splitIntoQuantizedBlocks x) (quantize y)
-dot (QuantizedVector x) (QuantizedVector y) = sum $ zipWith quantized_block_dot (splitIntoQuantizedBlocks x) (splitIntoQuantizedBlocks y)
-dot (Vector x) (QuantizedVector y) = sum $ zipWith quantized_block_dot (quantize x) (splitIntoQuantizedBlocks y)
+dot (QuantizedVector x) (Vector y) =
+  --traceItem "dot1" $
+  sum $
+  --traceItem "theList" $
+  zipWith quantized_block_dot x (quantize y)
+dot (QuantizedVector x) (QuantizedVector y) = traceItem "dot2" $ sum $ zipWith quantized_block_dot x y
+dot (Vector x) (QuantizedVector y) = traceItem "dot3" $ sum $ zipWith quantized_block_dot (quantize x) y
 
 vectorLength :: Vector -> Int
 vectorLength (Vector elems) = length elems
-vectorLength (QuantizedVector elems) = B.length elems * 32 `div` 20
+vectorLength (QuantizedVector elems) = length elems * 32
 
 quantized_block_dot :: QuantizedBlock -> QuantizedBlock -> Float
-quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) =
+--quantized_block_dot (QuantizedBlock f1 n1) (QuantizedBlock f2 n2) | trace ("f1 = " ++ format f1 ++ ", f2 = " ++ format f2 ++ ", n1 = " ++ show n1 ++ ", n2 = " ++ show n2 ++ ", int dot = " ++ show (sum $ zipWith (*) n1 n2)) False = undefined
+quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) = --traceItem "quantized_block_dot" $ 
   f1 * f2 * (fromIntegral $ sum $ zipWith (*) ints1 ints2)
+--  f1 * f2 * (sum $ zipWith (*) (map fromIntegral ints1) (map fromIntegral ints2))
   
 quantize :: [Float] -> [QuantizedBlock]
-quantize [] = []
-quantize floats =
-  let (firstBlockFloats, rest) = splitAt 32 floats
-  in quantize_single_block firstBlockFloats:quantize rest
+--quantize x | trace ("quantizing: " ++ show (length x)) False = undefined
+quantize floats = map quantize_single_block $ chunksOf 32 floats
 
 quantize_single_block :: [Float] -> QuantizedBlock
 quantize_single_block floats | length floats /= 32 = error $ "quantization blocks must have length 32, actually is " ++ show (length floats)
@@ -297,19 +314,6 @@ quantize_single_block floats =
   QuantizedBlock d (map (round . (inverse_d *)) floats)
   where d = maximum (map abs floats)/7
         inverse_d = 1/d
-
-data QuantizedBlock = QuantizedBlock Float [Int16] deriving (Show)
-
-splitIntoQuantizedBlocks :: ByteString -> [QuantizedBlock]
-splitIntoQuantizedBlocks theData = map parseQuantizedBlock $ splitIntoBlocks theData
-  where
-    parseQuantizedBlock :: ByteString -> QuantizedBlock
-    parseQuantizedBlock theBlock = 
-      let (dBytes, bytes) = B.splitAt 4 theBlock
-          d = bytesToFloats dBytes
-          theNibbles = concat $ map splitInt8IntoNibbles $ B.unpack bytes
-      in QuantizedBlock (V.head d) $ map fromIntegral theNibbles
-
 
 meanNorm :: Matrix -> Matrix
 meanNorm m@(Matrix theFloats) = 

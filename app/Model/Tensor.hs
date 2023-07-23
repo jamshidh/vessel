@@ -2,6 +2,7 @@
 
 module Model.Tensor (
   GenericTensor(..),
+  QuantizedBlock(..),
   Matrix(..),
   Vector(..),
   tensorToMatrix,
@@ -9,6 +10,7 @@ module Model.Tensor (
   getRow,
   bytesToFloats,
   splitIntoBlocks,
+  splitIntoQuantizedBlocks,
   splitInt8IntoNibbles
   ) where
 
@@ -27,6 +29,8 @@ import qualified Data.Vector.Storable as V
 
 import Format
 import Model.Float ()
+
+import Debug.Trace
 
 data TensorType =
   Q4_0
@@ -90,8 +94,13 @@ tensorToMatrix t@GenericTensor{fType=F32} =
 tensorToMatrix t@GenericTensor{fType=Q4_0} = 
   let width = dim_num_elems t !! 1
       height = dim_num_elems t !! 0
-  in QuantizedMatrix (elems t) (fromIntegral height) (fromIntegral width)
+  in QuantizedMatrix (map splitIntoQuantizedBlocks $ byteStringChunksOf (fromIntegral height * 20 `div` 32) $ elems t) (fromIntegral height) (fromIntegral width)
 
+byteStringChunksOf :: Int -> ByteString -> [ByteString]
+byteStringChunksOf _ s | B.length s == 0 = []
+byteStringChunksOf i s | B.length s < i = error $ "string length not a multiple of i: remainder = " ++ show (B.length s)
+byteStringChunksOf i s = first:byteStringChunksOf i rest
+  where (first, rest) = B.splitAt i s
 
 
 
@@ -99,7 +108,7 @@ tensorToVector :: GenericTensor -> Vector
 tensorToVector GenericTensor{..} | length dim_num_elems /= 1 = error "You can't convert a matrix to a vector"
 tensorToVector t@GenericTensor{fType=F32} = -- TODO check size matches
   Vector $ V.toList $ bytesToFloats $ elems t
-tensorToVector t@GenericTensor{fType=Q4_0} = QuantizedVector $ elems t -- $ getRow t 0
+tensorToVector t@GenericTensor{fType=Q4_0} = QuantizedVector $ splitIntoQuantizedBlocks $ elems t -- $ getRow t 0
 
 --tensorToVector = Vector . tensorToFloatList 
 
@@ -112,45 +121,68 @@ splitInt8IntoNibbles v = [(\x -> x-8) $ fromIntegral $ v .&. 0xf, (\x -> x-8) $ 
 bytesToFloats :: ByteString -> V.Vector Float
 bytesToFloats = V.unsafeCast . aux . B.toForeignPtr
   where aux (fp,offset,len) = V.unsafeFromForeignPtr fp offset len
-
+{-
 blockToFloats :: ByteString -> [Float]
 blockToFloats theBlock = 
   let (dBytes, bytes) = B.splitAt 4 theBlock
       d = bytesToFloats dBytes
       theNibbles = concat $ map splitInt8IntoNibbles $ B.unpack bytes
   in map (*(V.head d::Float)) $ map fromIntegral theNibbles
+-}
+quantizedBlockToFloats :: QuantizedBlock -> [Float]
+quantizedBlockToFloats (QuantizedBlock theFloat theNibbles) = 
+  map (* theFloat) $ map fromIntegral theNibbles
+
 
 splitIntoBlocks :: ByteString -> [ByteString]
 splitIntoBlocks x | B.length x == 0 = []
 splitIntoBlocks x = first:splitIntoBlocks rest
   where (first, rest) = B.splitAt 20 x
-
+{-
 bytesForRow :: Matrix -> Int -> ByteString
 bytesForRow QuantizedMatrix{..} i = B.take numberOfRowBytes $ B.drop (i*numberOfRowBytes) matrixData
   where numberOfRowBytes = matrixHeight * 20 `div` 32
 bytesForRow Matrix{} _ = error "bytesForRow only implemented for Quantized matrix"
-
+-}
 
 
 getRow :: Matrix -> Int -> Vector
-getRow m@QuantizedMatrix{} = Vector . concat . map blockToFloats . splitIntoBlocks . bytesForRow m
-getRow _ = error "getRow not definted for non-quantized Matrix"
+getRow m i | trace ("getRow: " ++ format m ++ " " ++ show i) False = undefined
+getRow QuantizedMatrix{..} i = Vector . concat . map quantizedBlockToFloats . (matrixData !!) $ i -- concat . map blockToFloats . splitIntoBlocks . bytesForRow m
+getRow _ _ = error "getRow not definted for non-quantized Matrix"
+
+data QuantizedBlock = QuantizedBlock Float [Int8] deriving (Show)
+
+splitIntoQuantizedBlocks :: ByteString -> [QuantizedBlock]
+splitIntoQuantizedBlocks theData = map parseQuantizedBlock $ splitIntoBlocks theData
+  where
+    parseQuantizedBlock :: ByteString -> QuantizedBlock
+    parseQuantizedBlock theBlock = 
+      let (dBytes, bytes) = B.splitAt 4 theBlock
+          d = bytesToFloats dBytes
+          theNibbles = concat $ map splitInt8IntoNibbles $ B.unpack bytes
+      in QuantizedBlock (V.head d) theNibbles
+
+
+
 
 data Matrix = Matrix [[Float]] |
   QuantizedMatrix {
-    matrixData ::ByteString,
+--    matrixData ::ByteString,
+    matrixData ::[[QuantizedBlock]],
     matrixHeight :: Int,
     matrixWidth :: Int
   }
 
-data Vector = Vector [Float] | QuantizedVector ByteString
+data Vector = Vector [Float] | QuantizedVector [QuantizedBlock]
 
 instance Format Vector where
   format (Vector x) = "[" ++ show (length x) ++ "]\n"
                       ++ show (take 10 x)
-  format (QuantizedVector theData) = "QuantizedVector [" ++ show (B.length theData * 32 `div` 20) ++ "]"
+  format (QuantizedVector theData) = "QuantizedVector [" ++ show (length theData * 32) ++ "]"
 
 instance Format Matrix where
+  format (Matrix []) = "<empty matrix>"
   format (Matrix x) = "[" ++ show (length x) ++ " x " ++ show (length $ head x) ++ "]\n"
   --             ++ unlines (map (("    " ++) . show . take 5) (take 5 x))
                       ++ unlines (map showLine (take 5 x))
