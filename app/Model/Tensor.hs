@@ -174,7 +174,7 @@ data Matrix = Matrix [[Float]] |
     matrixWidth :: Int
   }
 
-data Vector = Vector [Float] | QuantizedVector [QuantizedBlock]
+data Vector = Vector [Float] | QuantizedVector [QuantizedBlock] deriving (Show)
 
 instance Format Vector where
   format (Vector x) = "[" ++ show (length x) ++ "]\n"
