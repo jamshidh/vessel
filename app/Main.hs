@@ -274,13 +274,17 @@ formatShortMatrix m =
 -}
 
 matMul :: Matrix -> Matrix -> Matrix
---matMul x y | trace ("multiplying: " ++ formatShortMatrix x ++ " * " ++ formatShortMatrix y ++ ", num ops = " ++ show (height x * width x * width y)) False = undefined
+--matMul x y | trace ("multiplying: " ++ formatShortMatrix x ++ " * " ++ formatShortMatrix y ++ ", num ops = " ++ show (height x * width x * width y) ++ ", num vec ops = " ++ show (width x * width y)) False = undefined
 matMul x y | height x /= height y = error $ "matrix heights don't match: " ++ show (height x) ++ " /= " ++ show (height y)
 matMul x@(Matrix _) y@(Matrix _) =
   Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
 matMul x@(QuantizedMatrix _ _ _) y@(Matrix _) =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
+  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors $ quantizeMatrix y
 matMul _ _ = error "unsupported case called in matMul"
+
+quantizeMatrix :: Matrix -> Matrix
+quantizeMatrix (Matrix vectors) = QuantizedMatrix (map quantize vectors) undefined undefined
+quantizeMatrix _ = error "unsupported case in quantizeMatrix"
 
 dot :: Vector -> Vector -> Float
 --dot x y | trace ("dot, length x = " ++ show (vectorLength x) ++ ", length y = " ++ show (vectorLength y)) False = undefined
@@ -291,7 +295,7 @@ dot (QuantizedVector x) (Vector y) =
   sum $
   --traceItem "theList" $
   zipWith quantized_block_dot x (quantize y)
-dot (QuantizedVector x) (QuantizedVector y) = traceItem "dot2" $ sum $ zipWith quantized_block_dot x y
+dot (QuantizedVector x) (QuantizedVector y) = sum $ zipWith quantized_block_dot x y
 dot (Vector x) (QuantizedVector y) = traceItem "dot3" $ sum $ zipWith quantized_block_dot (quantize x) y
 
 vectorLength :: Vector -> Int
@@ -301,8 +305,8 @@ vectorLength (QuantizedVector elems) = length elems * 32
 quantized_block_dot :: QuantizedBlock -> QuantizedBlock -> Float
 --quantized_block_dot (QuantizedBlock f1 n1) (QuantizedBlock f2 n2) | trace ("f1 = " ++ format f1 ++ ", f2 = " ++ format f2 ++ ", n1 = " ++ show n1 ++ ", n2 = " ++ show n2 ++ ", int dot = " ++ show (sum $ zipWith (*) n1 n2)) False = undefined
 quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) = --traceItem "quantized_block_dot" $ 
-  f1 * f2 * (fromIntegral $ sum $ zipWith (*) ints1 ints2)
---  f1 * f2 * (sum $ zipWith (*) (map fromIntegral ints1) (map fromIntegral ints2))
+--  f1 * f2 * (fromIntegral $ sum $ zipWith (*) ints1 ints2)
+  f1 * f2 * (sum $ zipWith (*) (map fromIntegral ints1) (map fromIntegral ints2))
   
 quantize :: [Float] -> [QuantizedBlock]
 --quantize x | trace ("quantizing: " ++ show (length x)) False = undefined
