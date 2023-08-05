@@ -14,6 +14,7 @@ import Numeric.Half
 import Format
 
 import Model.Float ()
+import Model.Int4X32
 import Model.Model
 import Model.Tensor
 --import Model.Token
@@ -306,7 +307,7 @@ quantized_block_dot :: QuantizedBlock -> QuantizedBlock -> Float
 --quantized_block_dot (QuantizedBlock f1 n1) (QuantizedBlock f2 n2) | trace ("f1 = " ++ format f1 ++ ", f2 = " ++ format f2 ++ ", n1 = " ++ show n1 ++ ", n2 = " ++ show n2 ++ ", int dot = " ++ show (sum $ zipWith (*) n1 n2)) False = undefined
 quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) = --traceItem "quantized_block_dot" $ 
 --  f1 * f2 * (fromIntegral $ sum $ zipWith (*) ints1 ints2)
-  f1 * f2 * (sum $ zipWith (*) (map fromIntegral ints1) (map fromIntegral ints2))
+  f1 * f2 * ints1 `dot_Int4X32` ints2
   
 quantize :: [Float] -> [QuantizedBlock]
 --quantize x | trace ("quantizing: " ++ show (length x)) False = undefined
@@ -315,7 +316,7 @@ quantize floats = map quantize_single_block $ chunksOf 32 floats
 quantize_single_block :: [Float] -> QuantizedBlock
 quantize_single_block floats | length floats /= 32 = error $ "quantization blocks must have length 32, actually is " ++ show (length floats)
 quantize_single_block floats =
-  QuantizedBlock d (map (round . (inverse_d *)) floats)
+  QuantizedBlock d $ packInt4X32 $ map (round . (inverse_d *)) floats
   where d = maximum (map abs floats)/7
         inverse_d = 1/d
 

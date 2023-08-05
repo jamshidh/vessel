@@ -10,8 +10,7 @@ module Model.Tensor (
   getRow,
   bytesToFloats,
   splitIntoBlocks,
-  splitIntoQuantizedBlocks,
-  splitInt8IntoNibbles
+  splitIntoQuantizedBlocks
   ) where
 
 import Control.Monad
@@ -29,6 +28,7 @@ import qualified Data.Vector.Storable as V
 
 import Format
 import Model.Float ()
+import Model.Int4X32
 
 import Debug.Trace
 
@@ -114,10 +114,6 @@ tensorToVector t@GenericTensor{fType=Q4_0} = QuantizedVector $ splitIntoQuantize
 
 
 
-splitInt8IntoNibbles :: Word8 -> [Int8]
-splitInt8IntoNibbles v = [(\x -> x-8) $ fromIntegral $ v .&. 0xf, (\x -> x-8) $ fromIntegral $ v `shiftR` 4]
-
-
 bytesToFloats :: ByteString -> V.Vector Float
 bytesToFloats = V.unsafeCast . aux . B.toForeignPtr
   where aux (fp,offset,len) = V.unsafeFromForeignPtr fp offset len
@@ -129,9 +125,10 @@ blockToFloats theBlock =
       theNibbles = concat $ map splitInt8IntoNibbles $ B.unpack bytes
   in map (*(V.head d::Float)) $ map fromIntegral theNibbles
 -}
+
 quantizedBlockToFloats :: QuantizedBlock -> [Float]
 quantizedBlockToFloats (QuantizedBlock theFloat theNibbles) = 
-  map (* theFloat) $ map fromIntegral theNibbles
+  map (* theFloat) $ map fromIntegral $ unpackInt4X32 theNibbles
 
 
 splitIntoBlocks :: ByteString -> [ByteString]
@@ -151,7 +148,7 @@ getRow m i | trace ("getRow: " ++ format m ++ " " ++ show i) False = undefined
 getRow QuantizedMatrix{..} i = Vector . concat . map quantizedBlockToFloats . (matrixData !!) $ i -- concat . map blockToFloats . splitIntoBlocks . bytesForRow m
 getRow _ _ = error "getRow not definted for non-quantized Matrix"
 
-data QuantizedBlock = QuantizedBlock Float [Int8] deriving (Show)
+data QuantizedBlock = QuantizedBlock Float Int4X32 deriving (Show)
 
 splitIntoQuantizedBlocks :: ByteString -> [QuantizedBlock]
 splitIntoQuantizedBlocks theData = map parseQuantizedBlock $ splitIntoBlocks theData
@@ -160,7 +157,7 @@ splitIntoQuantizedBlocks theData = map parseQuantizedBlock $ splitIntoBlocks the
     parseQuantizedBlock theBlock = 
       let (dBytes, bytes) = B.splitAt 4 theBlock
           d = bytesToFloats dBytes
-          theNibbles = concat $ map splitInt8IntoNibbles $ B.unpack bytes
+          theNibbles = byteStringToInt4X32 bytes
       in QuantizedBlock (V.head d) theNibbles
 
 
