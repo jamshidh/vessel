@@ -105,7 +105,7 @@ vectorsToMatrix :: [Vector] -> Matrix
 vectorsToMatrix vectors = 
   case ([ v | Vector v <- vectors ], [ v | QuantizedVector v <- vectors ]) of
     (vectors', []) -> Matrix vectors'
-    ([], quantizedVectors) -> QuantizedMatrix quantizedVectors (vectorLength (head vectors) * 32) (length vectors)
+    ([], quantizedVectors) -> QuantizedMatrix quantizedVectors
     _ -> error "error calling vectorsToMatrix: list of Vectors contains mixed quantized and non-quantized values."
 
 matrixVectors :: Matrix -> [Vector]
@@ -195,11 +195,11 @@ feedForward Layer{..} inpFF =
 
 unMatrix :: Matrix -> [[Float]]
 unMatrix (Matrix m) = m
-unMatrix (QuantizedMatrix _ _ _) = error "unMatrix not defined for QuantizedMatrix"
+unMatrix (QuantizedMatrix _) = error "unMatrix not defined for QuantizedMatrix"
 
 matrixRows :: Matrix -> [Vector]
 matrixRows (Matrix rows) = map Vector rows
-matrixRows (QuantizedMatrix _ _ _) = error "matrixRows not defined for QuantizedMatrix"
+matrixRows (QuantizedMatrix _) = error "matrixRows not defined for QuantizedMatrix"
 
 
 buildMatrixFromRows :: [Vector] -> Matrix
@@ -216,18 +216,9 @@ replicateVector :: Vector -> Int -> Matrix
 replicateVector (Vector vals) i = Matrix $ replicate i vals
 replicateVector (QuantizedVector _) _ = error "replicateVector not defined for QuantizedVector"
 
-height :: Matrix -> Int
-height (Matrix []) = 0
-height (Matrix m) = length $ head m
-height QuantizedMatrix{..} = matrixHeight
-
-width :: Matrix -> Int
-width (Matrix m) = length m
-width QuantizedMatrix{..} = matrixWidth
-
 transposeMatrix :: Matrix -> Matrix
 transposeMatrix (Matrix m) = Matrix $ transpose m
-transposeMatrix (QuantizedMatrix _ _ _) = error "transposeMatrix not defined for QuantizedMatrix"
+transposeMatrix (QuantizedMatrix _) = error "transposeMatrix not defined for QuantizedMatrix"
 
 simpleElementMul :: Matrix -> Matrix -> Matrix
 simpleElementMul x y | (height x /= height y) || (width x /= width y) = error "mismsatched matrix sizes"
@@ -237,7 +228,7 @@ simpleElementMul _ _ = error "simpleElementMul not defined for QuantizedMatrix"
 
 matrixMap :: (Float -> Float) -> Matrix -> Matrix
 matrixMap f (Matrix m) = Matrix $ map (map f) m
-matrixMap _ (QuantizedMatrix _ _ _) = error "matrixMap not defined for QuantizedMatrix"
+matrixMap _ (QuantizedMatrix _) = error "matrixMap not defined for QuantizedMatrix"
 
 
 softMax :: Vector -> Vector
@@ -246,7 +237,7 @@ softMax (QuantizedVector _) = error "softMax not defined for QuantizedVector"
 
 filterUpperDiagonal :: Matrix -> Matrix
 filterUpperDiagonal (Matrix theMatrix) = Matrix $ map (\(theRow, i) -> filterAfter i theRow) $ zip theMatrix [1..]
-filterUpperDiagonal (QuantizedMatrix _ _ _) = error "filterUpperDiagonal not defined for QuantizedMatrix"
+filterUpperDiagonal (QuantizedMatrix _) = error "filterUpperDiagonal not defined for QuantizedMatrix"
 
 
 filterAfter :: Int -> [Float] -> [Float]
@@ -279,12 +270,12 @@ matMul :: Matrix -> Matrix -> Matrix
 matMul x y | height x /= height y = error $ "matrix heights don't match: " ++ show (height x) ++ " /= " ++ show (height y)
 matMul x@(Matrix _) y@(Matrix _) =
   Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
-matMul x@(QuantizedMatrix _ _ _) y@(Matrix _) =
+matMul x@(QuantizedMatrix _) y@(Matrix _) =
   Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors $ quantizeMatrix y
 matMul _ _ = error "unsupported case called in matMul"
 
 quantizeMatrix :: Matrix -> Matrix
-quantizeMatrix (Matrix vectors) = QuantizedMatrix (map quantize vectors) undefined undefined
+quantizeMatrix (Matrix vectors) = QuantizedMatrix (map quantize vectors)
 quantizeMatrix _ = error "unsupported case in quantizeMatrix"
 
 dot :: Vector -> Vector -> Float
@@ -326,4 +317,4 @@ meanNorm m@(Matrix theFloats) =
       squaresAsDoubles = map (map realToFrac) squares :: [[Double]]
       scaleFactors = map ((1/) . sqrt . (+1e-5)) $ map ((/realToFrac (height m)) . sum) squaresAsDoubles
   in Matrix $ zipWith (\sf f -> map (sf*) f) (map realToFrac scaleFactors) theFloats
-meanNorm (QuantizedMatrix _ _ _) = error "meanNorm not defined for QuantizedMatrix"
+meanNorm (QuantizedMatrix _) = error "meanNorm not defined for QuantizedMatrix"

@@ -5,6 +5,8 @@ module Model.Tensor (
   QuantizedBlock(..),
   Matrix(..),
   Vector(..),
+  width,
+  height,
   tensorToMatrix,
   tensorToVector,
   getRow,
@@ -94,7 +96,7 @@ tensorToMatrix t@GenericTensor{fType=F32} =
 tensorToMatrix t@GenericTensor{fType=Q4_0} = 
   let width = dim_num_elems t !! 1
       height = dim_num_elems t !! 0
-  in QuantizedMatrix (map splitIntoQuantizedBlocks $ byteStringChunksOf (fromIntegral height * 20 `div` 32) $ elems t) (fromIntegral height) (fromIntegral width)
+  in QuantizedMatrix (map splitIntoQuantizedBlocks $ byteStringChunksOf (fromIntegral height * 20 `div` 32) $ elems t)
 
 byteStringChunksOf :: Int -> ByteString -> [ByteString]
 byteStringChunksOf _ s | B.length s == 0 = []
@@ -166,10 +168,22 @@ splitIntoQuantizedBlocks theData = map parseQuantizedBlock $ splitIntoBlocks the
 data Matrix = Matrix [[Float]] |
   QuantizedMatrix {
 --    matrixData ::ByteString,
-    matrixData ::[[QuantizedBlock]],
-    matrixHeight :: Int,
-    matrixWidth :: Int
+    matrixData ::[[QuantizedBlock]]
+--    matrixHeight :: Int,
+--    matrixWidth :: Int
   }
+
+height :: Matrix -> Int
+height (Matrix []) = 0
+height (Matrix m) = length $ head m
+height (QuantizedMatrix m) = 32 * length (head m)
+
+width :: Matrix -> Int
+width (Matrix m) = length m
+width (QuantizedMatrix m) = length m
+
+
+
 
 data Vector = Vector [Float] | QuantizedVector [QuantizedBlock] deriving (Show)
 
@@ -185,5 +199,5 @@ instance Format Matrix where
                       ++ unlines (map showLine (take 5 x))
                       ++ (if length x > 5 then "    ....(etc)" else "")
     where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take 5 $ v
-  format QuantizedMatrix{..} = "QuantizedMatrix [" ++ show matrixHeight ++ " x " ++ show matrixWidth ++ "]"
+  format m@QuantizedMatrix{} = "QuantizedMatrix [" ++ show (height m) ++ " x " ++ show (width m) ++ "]"
 
