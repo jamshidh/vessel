@@ -110,7 +110,7 @@ vectorsToMatrix vectors =
 
 matrixVectors :: Matrix -> [Vector]
 matrixVectors (Matrix vectors) = map Vector vectors
-matrixVectors QuantizedMatrix{..} = map QuantizedVector matrixData
+matrixVectors (QuantizedMatrix matrixData) = map QuantizedVector matrixData
 
 {-
 applyPipeline :: [(a->a)] -> a -> a

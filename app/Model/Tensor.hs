@@ -147,7 +147,7 @@ bytesForRow Matrix{} _ = error "bytesForRow only implemented for Quantized matri
 
 getRow :: Matrix -> Int -> Vector
 getRow m i | trace ("getRow: " ++ format m ++ " " ++ show i) False = undefined
-getRow QuantizedMatrix{..} i = Vector . concat . map quantizedBlockToFloats . (matrixData !!) $ i -- concat . map blockToFloats . splitIntoBlocks . bytesForRow m
+getRow (QuantizedMatrix matrixData) i = Vector . concat . map quantizedBlockToFloats . (matrixData !!) $ i -- concat . map blockToFloats . splitIntoBlocks . bytesForRow m
 getRow _ _ = error "getRow not definted for non-quantized Matrix"
 
 data QuantizedBlock = QuantizedBlock Float Int4X32 deriving (Show)
@@ -166,12 +166,7 @@ splitIntoQuantizedBlocks theData = map parseQuantizedBlock $ splitIntoBlocks the
 
 
 data Matrix = Matrix [[Float]] |
-  QuantizedMatrix {
---    matrixData ::ByteString,
-    matrixData ::[[QuantizedBlock]]
---    matrixHeight :: Int,
---    matrixWidth :: Int
-  }
+              QuantizedMatrix [[QuantizedBlock]]
 
 height :: Matrix -> Int
 height (Matrix []) = 0
