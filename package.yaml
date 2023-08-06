@@ -19,6 +19,8 @@ executables:
   vessel-runner:
     main:                Main.hs
     source-dirs:         app
+    c-sources:
+      c-source/fastvector.c
     ghc-options:
     - -threaded
     - -rtsopts
