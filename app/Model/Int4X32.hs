@@ -7,6 +7,7 @@ module Model.Int4X32 (
   dot_Int4X32
   ) where
 
+import Control.Monad
 import Data.Bits
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
@@ -44,6 +45,20 @@ dot_Int4X32 (Int4X32 x) (Int4X32 y) = sum $ zipWith (*) (map fromIntegral x) (ma
 foreign import ccall "dot_Int4X32" c_dot_Int4X32 :: Ptr Word8 -> Ptr Word8 -> Float
 
 data Int4X32 = Int4X32 ByteString deriving (Show)
+
+instance Storable Int4X32 where
+  alignment = sizeOf
+  sizeOf _ = 16
+  poke p (Int4X32 bytes) = do
+    let bytes' = B.unpack bytes
+        word8_p = castPtr p
+    forM_ (zip bytes' [0..]) $ \(b, i) ->
+      poke (word8_p `plusPtr` i) b
+
+  peek p = do
+    let word8_p = castPtr p
+    bytes <- forM [0..15] $ \i -> peek (word8_p `plusPtr` i)
+    return $ Int4X32 $ B.pack bytes
 
 packInt4X32 :: [Int8] -> Int4X32
 packInt4X32 nibbles = Int4X32 $ B.pack $ map (\[high, low] -> (low `shiftL` 4) + high) $ chunksOf 2 $ map (fromIntegral . (8+)) nibbles

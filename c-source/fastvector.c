@@ -34,3 +34,34 @@ float dot_Int4X32(char *x, char *y) {
     return vaddvq_s32(p);
 
 }
+
+
+void printBytes(char *name, char *val) {
+  printf("%s = ", name);
+  for(int i=0; i < 40; i++) {
+    printf("%02hhx-", val[i]);
+  }
+  printf("\n");
+}
+
+float vector_dot(int len, char *x, char *y) {
+  float sum = 0.0;
+
+  //printBytes("x", x);
+  //printBytes("y", y);
+
+  const int floatSize = 4;
+  const int nibbleSize = 16;
+  const int blockSize = floatSize + nibbleSize;
+  
+  for(int i = 0; i < len; i++) {
+    char *px = x+blockSize*i;
+    char *py = y+blockSize*i;
+    float *fx = (float*) px;
+    float *fy = (float *) py;
+    //printf("f1 = %a\n", *f1);
+    //printf("f2 = %a\n", *f2);
+    sum += *fx * *fy * dot_Int4X32(px+floatSize, py+floatSize);
+  }
+  return sum;
+}

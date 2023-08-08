@@ -9,7 +9,10 @@ import qualified Data.ByteString.Lazy as BL
 import Data.IORef
 import Data.List (transpose)
 import Data.List.Split
+import qualified Data.Vector.Storable as V
+import Foreign.Ptr
 import Numeric.Half
+import System.IO.Unsafe
 
 import Format
 
@@ -282,27 +285,37 @@ dot :: Vector -> Vector -> Float
 --dot x y | trace ("dot, length x = " ++ show (vectorLength x) ++ ", length y = " ++ show (vectorLength y)) False = undefined
 dot x y | vectorLength x /= vectorLength y = error $ "dot product lengths do not match: " ++ show (vectorLength x) ++ "/=" ++ show (vectorLength y)
 dot (Vector x) (Vector y) = sum $ zipWith (*) x y
-dot (QuantizedVector x) (Vector y) =
-  --traceItem "dot1" $
-  sum $
-  --traceItem "theList" $
-  zipWith quantized_block_dot x (quantize y)
-dot (QuantizedVector x) (QuantizedVector y) = sum $ zipWith quantized_block_dot x y
-dot (Vector x) (QuantizedVector y) = traceItem "dot3" $ sum $ zipWith quantized_block_dot (quantize x) y
+dot (QuantizedVector x) (Vector y) = x `quantized_vector_dot` quantize y
+dot (QuantizedVector x) (QuantizedVector y) = x `quantized_vector_dot` y
+dot (Vector x) (QuantizedVector y) = quantize x `quantized_vector_dot` y
 
 vectorLength :: Vector -> Int
 vectorLength (Vector elems) = length elems
-vectorLength (QuantizedVector elems) = length elems * 32
+vectorLength (QuantizedVector elems) = V.length elems * 32
 
-quantized_block_dot :: QuantizedBlock -> QuantizedBlock -> Float
+foreign import ccall "vector_dot" vector_dot :: Int -> Ptr QuantizedBlock -> Ptr QuantizedBlock -> Float
+
+quantized_vector_dot :: V.Vector QuantizedBlock -> V.Vector QuantizedBlock -> Float
 --quantized_block_dot (QuantizedBlock f1 n1) (QuantizedBlock f2 n2) | trace ("f1 = " ++ format f1 ++ ", f2 = " ++ format f2 ++ ", n1 = " ++ show n1 ++ ", n2 = " ++ show n2 ++ ", int dot = " ++ show (sum $ zipWith (*) n1 n2)) False = undefined
-quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) = --traceItem "quantized_block_dot" $ 
+quantized_vector_dot v1 v2 | V.length v1 /= V.length v2 = error "vector lengths different in call to quantized_vector_dot"
+quantized_vector_dot v1 v2 = unsafePerformIO $
+  V.unsafeWith v1 $ \p1 ->
+  V.unsafeWith v2 $ \p2 ->
+                      return $ vector_dot (V.length v1) p1 p2
+
+
+
+{-
+--quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) = --traceItem "quantized_block_dot" $ 
 --  f1 * f2 * (fromIntegral $ sum $ zipWith (*) ints1 ints2)
-  f1 * f2 * ints1 `dot_Int4X32` ints2
-  
-quantize :: [Float] -> [QuantizedBlock]
+  let f1 = V.unsafeCast $ castPtr p1 :: Float
+      f2 = V.unsafeCast $ castPtr p2 :: Float
+  in f1 * f2 * ints1 `dot_Int4X32` ints2
+-}
+
+quantize :: [Float] -> V.Vector QuantizedBlock
 --quantize x | trace ("quantizing: " ++ show (length x)) False = undefined
-quantize floats = map quantize_single_block $ chunksOf 32 floats
+quantize floats = V.fromList $ map quantize_single_block $ chunksOf 32 floats
 
 quantize_single_block :: [Float] -> QuantizedBlock
 quantize_single_block floats | length floats /= 32 = error $ "quantization blocks must have length 32, actually is " ++ show (length floats)

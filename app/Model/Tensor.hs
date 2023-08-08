@@ -27,6 +27,8 @@ import qualified Data.ByteString.Char8 as BC
 import Data.Int
 import Data.List (intercalate)
 import qualified Data.Vector.Storable as V
+import Foreign.Ptr
+import Foreign.Storable
 
 import Format
 import Model.Float ()
@@ -147,13 +149,25 @@ bytesForRow Matrix{} _ = error "bytesForRow only implemented for Quantized matri
 
 getRow :: Matrix -> Int -> Vector
 getRow m i | trace ("getRow: " ++ format m ++ " " ++ show i) False = undefined
-getRow (QuantizedMatrix matrixData) i = Vector . concat . map quantizedBlockToFloats . (matrixData !!) $ i -- concat . map blockToFloats . splitIntoBlocks . bytesForRow m
+getRow (QuantizedMatrix matrixData) i = Vector . concat . map quantizedBlockToFloats . V.toList . (matrixData !!) $ i -- concat . map blockToFloats . splitIntoBlocks . bytesForRow m
 getRow _ _ = error "getRow not definted for non-quantized Matrix"
 
 data QuantizedBlock = QuantizedBlock Float Int4X32 deriving (Show)
 
-splitIntoQuantizedBlocks :: ByteString -> [QuantizedBlock]
-splitIntoQuantizedBlocks theData = map parseQuantizedBlock $ splitIntoBlocks theData
+instance Storable QuantizedBlock where
+  sizeOf _ = 20
+  alignment = sizeOf
+  peek p = do
+    f <- peek (castPtr p)
+    nibbles <- peek (castPtr $ (castPtr p::Ptr Word8) `plusPtr` 4)
+    return $ QuantizedBlock f nibbles
+    
+  poke p (QuantizedBlock f nibbles) = do
+    poke (castPtr p) f
+    poke (castPtr $ (castPtr p::Ptr Word8) `plusPtr` 4) nibbles
+
+splitIntoQuantizedBlocks :: ByteString -> (V.Vector QuantizedBlock)
+splitIntoQuantizedBlocks theData = V.fromList $ map parseQuantizedBlock $ splitIntoBlocks theData
   where
     parseQuantizedBlock :: ByteString -> QuantizedBlock
     parseQuantizedBlock theBlock = 
@@ -166,12 +180,12 @@ splitIntoQuantizedBlocks theData = map parseQuantizedBlock $ splitIntoBlocks the
 
 
 data Matrix = Matrix [[Float]] |
-              QuantizedMatrix [[QuantizedBlock]]
+              QuantizedMatrix [V.Vector QuantizedBlock]
 
 height :: Matrix -> Int
 height (Matrix []) = 0
 height (Matrix m) = length $ head m
-height (QuantizedMatrix m) = 32 * length (head m)
+height (QuantizedMatrix m) = 32 * V.length (head m)
 
 width :: Matrix -> Int
 width (Matrix m) = length m
@@ -180,12 +194,12 @@ width (QuantizedMatrix m) = length m
 
 
 
-data Vector = Vector [Float] | QuantizedVector [QuantizedBlock] deriving (Show)
+data Vector = Vector [Float] | QuantizedVector (V.Vector QuantizedBlock) deriving (Show)
 
 instance Format Vector where
   format (Vector x) = "[" ++ show (length x) ++ "]\n"
                       ++ show (take 10 x)
-  format (QuantizedVector theData) = "QuantizedVector [" ++ show (length theData * 32) ++ "]"
+  format (QuantizedVector theData) = "QuantizedVector [" ++ show (V.length theData * 32) ++ "]"
 
 instance Format Matrix where
   format (Matrix []) = "<empty matrix>"
