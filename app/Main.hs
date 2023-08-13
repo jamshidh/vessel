@@ -1,8 +1,10 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Main (main) where
 
+--import Control.DeepSeq
 import Control.Monad
 import Data.Binary
 import qualified Data.ByteString.Lazy as BL
@@ -45,6 +47,8 @@ doit = do
   let model :: Model
       model = rawModelToModel rawModel
 
+  --putStrLn $ model `deepseq` "abcd"
+  
 {-
   let phrase = " Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
 
@@ -129,16 +133,11 @@ processLayer layer inputLayer =
       inputFF = afterAttention `matAdd` inputLayer -- normalized2
       outputFF = feedForward layer inputFF
       outputLayer = outputFF `matAdd` inputFF
-  in trace (
-    "normzlized = " ++ format normalized ++ "\n" ++
-    "normzlized2 = " ++ format normalized2 ++ "\n" ++
-    "afterAttention = " ++ format afterAttention ++ "\n" ++
-    "inputFF = " ++ format inputFF ++ "\n" ++
-    "outputFF = " ++ format outputFF ++ "\n" ++
-    "outputLayer = " ++ format outputLayer
-    )
-     outputLayer
+  in outputLayer
   
+instance Format [Matrix] where
+  format x = "head = " ++ format (head x)
+
 
 selfAttention :: Layer -> Matrix -> Matrix
 selfAttention Layer{..} inputSA =
@@ -152,7 +151,7 @@ selfAttention Layer{..} inputSA =
       qBlobs :: [Matrix]
       qBlobs = map (Matrix . embedPositions) $ transpose $ map (chunksOf headSize) $ unMatrix qCur
       vBlobs :: [Matrix]
-      vBlobs = map (Matrix . embedPositions) $ transpose $ map (chunksOf headSize) $ unMatrix vCur
+      vBlobs = map Matrix $ transpose $ map (chunksOf headSize) $ unMatrix vCur
       kqs :: [Matrix]
       kqs = zipWith matMul kBlobs qBlobs -- 32 times: [4 x 4] = [4 x 128] * [4 x 128]
       kqs_scaled :: [Matrix]
@@ -164,17 +163,7 @@ selfAttention Layer{..} inputSA =
       kqv :: [Matrix]
       kqv = zipWith matMul (map transposeMatrix vBlobs) kqs_softmax -- 32 times: [128 x 4] = [4 x 128] * [4 x 4]
       output = attention_wo `matMul` transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
-  in trace (
-    "==========================\nattention_wk(" ++ show layerNumber ++ "): " ++ format attention_wk ++ "\n" ++
-    "kCur = " ++ format kCur ++ "\n" ++
-    "qCur = " ++ format qCur ++ "\n" ++
-    "vCur = " ++ format vCur ++ "\n" ++
-    "kBlobs = " ++ format (head kBlobs) ++ "\n" ++
-    "first mul: " ++ format (head kqs) ++ "\n" ++
-    "first mul softmax: " ++ format (head kqs_softmax) ++ "\n" ++
-    "first kqv: " ++ format (head kqv)
-    )
-    output
+  in output
 
 feedForward :: Layer -> Matrix -> Matrix
 feedForward Layer{..} inpFF = 
@@ -186,15 +175,7 @@ feedForward Layer{..} inpFF =
       cur4 = matrixMap (fromHalf . toHalf . silu . fromHalf . toHalf) cur3
       cur5 = cur4 `simpleElementMul` tmp
       cur6 = feed_forward_w2 `matMul` cur5
-  in trace (
-    "feed_forward_w1: " ++ format feed_forward_w1 ++ "\n" ++
-    "feed_forward_w2: " ++ format feed_forward_w2 ++ "\n" ++
-    "feed_forward_w3: " ++ format feed_forward_w3 ++ "\n" ++
-    "cur3:  " ++ format cur3 ++ "\n" ++
-    "cur4:  " ++ format cur4 ++ "\n" ++
-    "cur5:  " ++ format cur5 ++ "\n" ++
-    "cur6:  " ++ format cur6
-    ) cur6
+  in cur6
 
 unMatrix :: Matrix -> [[Float]]
 unMatrix (Matrix m) = m
