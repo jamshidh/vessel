@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Model.Tensor (
@@ -15,6 +17,7 @@ module Model.Tensor (
   splitIntoQuantizedBlocks
   ) where
 
+import Control.DeepSeq
 import Control.Monad
 import Data.Binary
 import Data.Binary.Get
@@ -29,6 +32,7 @@ import Data.List (intercalate)
 import qualified Data.Vector.Storable as V
 import Foreign.Ptr
 import Foreign.Storable
+import GHC.Generics
 
 import Format
 import Model.Float ()
@@ -180,7 +184,7 @@ splitIntoQuantizedBlocks theData = V.fromList $ map parseQuantizedBlock $ splitI
 
 
 data Matrix = Matrix [[Float]] |
-              QuantizedMatrix [V.Vector QuantizedBlock]
+              QuantizedMatrix [V.Vector QuantizedBlock] deriving (Generic, NFData)
 
 height :: Matrix -> Int
 height (Matrix []) = 0
@@ -194,7 +198,7 @@ width (QuantizedMatrix m) = length m
 
 
 
-data Vector = Vector [Float] | QuantizedVector (V.Vector QuantizedBlock) deriving (Show)
+data Vector = Vector [Float] | QuantizedVector (V.Vector QuantizedBlock) deriving (Show, Generic, NFData)
 
 instance Format Vector where
   format (Vector x) = "[" ++ show (length x) ++ "]\n"

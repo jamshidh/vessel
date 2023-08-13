@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Model.Model (
@@ -7,12 +9,14 @@ module Model.Model (
   ) where
 
 import Control.Monad
+import Control.DeepSeq
 import Data.Binary
 import Data.Binary.Get
 import qualified Data.ByteString.Char8 as BC
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe
+import GHC.Generics
 
 import Format
 
@@ -70,7 +74,7 @@ data Model = Model {
   norm :: Vector,
   output :: Matrix,
   tokenEmbeddings :: Matrix
-  }
+  } deriving (Generic, NFData)
 
 data Layer =
   Layer {
@@ -84,14 +88,16 @@ data Layer =
     feed_forward_w2 :: Matrix,
     feed_forward_w3 :: Matrix,
     ffn_norm :: Vector
-  }
+  } deriving (Generic, NFData)
 
 rawModelToModel :: RawModel -> Model
 rawModelToModel rawModel =
   Model {
     tokens = tokens' rawModel,
     layers = map (getLayer rawModel) [0..fromIntegral (n_layer rawModel-1)],
+    --norm = Vector [], --dummy value for deepseq
     norm = error "norm undefined",
+    --output = Matrix [[]], --dummy value for deepseq
     output = error "output undefined",
     tokenEmbeddings = getModelMatrix rawModel "tok_embeddings.weight"
   }

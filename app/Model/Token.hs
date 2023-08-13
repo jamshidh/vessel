@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Model.Token (
@@ -6,15 +8,17 @@ module Model.Token (
   tokensToTokenTrie
   ) where
 
+import Control.DeepSeq
 import Data.Binary
 import Data.Binary.Get
 import qualified Data.ByteString.Char8 as BC
 import Data.Trie (Trie)
 import qualified Data.Trie as Trie
+import GHC.Generics
 
 import Format
 
-newtype Token = Token String deriving (Show)
+newtype Token = Token String deriving (Show, Generic, NFData)
 
 instance Format Token where
   format (Token t) = t
