@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE HexFloatLiterals #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -86,7 +87,7 @@ doit = do
     currentValue <- readIORef value
     let output = processLayer layer currentValue
     writeIORef value output
-    putStrLn $ "output = " ++ format output
+    --putStrLn $ "output = " ++ format output
 
 
   outputLayer <- readIORef value
@@ -97,15 +98,14 @@ doit = do
 
   putStrLn $ "normalizedOutputLayer = " ++ format normalizedOutputLayer
 
-{-  
-  let normalizedOutputLayer2 = map (zipWith (*) $ norm model) normalizedOutputLayer
+  let normalizedOutputLayer2 = replicateVector (norm model) (width normalizedOutputLayer) `simpleElementMul` normalizedOutputLayer
 
   putStrLn $ "normalizedOutputLayer2 = " ++ format normalizedOutputLayer2
 
   let output' = output model `matMul` normalizedOutputLayer2
 
   putStrLn $ "output' = " ++ format output'
--}
+
 
 
 vectorsToMatrix :: [Vector] -> Matrix
@@ -126,7 +126,7 @@ applyPipeline = flip $ foldr ($)
 
 processLayer :: Layer -> Matrix -> Matrix
 processLayer layer inputLayer =
-  let normalized = traceItem "normalized" $ meanNorm inputLayer
+  let normalized = meanNorm (traceItem ("[" ++ show (layerNumber layer) ++ "] inputLayer") inputLayer)
       --normalized2 = map (zipWith (*) $ attention_norm layer) normalized
       normalized2 = replicateVector (attention_norm layer) (width normalized) `simpleElementMul` normalized
       afterAttention = selfAttention layer normalized2
@@ -136,8 +136,8 @@ processLayer layer inputLayer =
   in outputLayer
   
 instance Format [Matrix] where
-  format x = "head = " ++ format (head x)
-
+  --format x = "(" ++ format (sum (join $ map join $ transpose $ map unMatrix x)) ++ ") head = " ++ format (head x)
+  format x = "(" ++ format (sum (join $ map join $ map unMatrix x)) ++ ") head = " ++ format (head x)
 
 selfAttention :: Layer -> Matrix -> Matrix
 selfAttention Layer{..} inputSA =
@@ -155,14 +155,16 @@ selfAttention Layer{..} inputSA =
       kqs :: [Matrix]
       kqs = zipWith matMul kBlobs qBlobs -- 32 times: [4 x 4] = [4 x 128] * [4 x 128]
       kqs_scaled :: [Matrix]
-      kqs_scaled = map (matrixMap (/sqrt 128.0)) kqs
+      kqs_scaled = --map (matrixMap (/sqrt 128.0)) kqs
+                   map (matrixMap (* (0x1.6a09e6p-4))) kqs
       kqs_masked :: [Matrix]
       kqs_masked = map filterUpperDiagonal kqs_scaled
       kqs_softmax :: [Matrix]
       kqs_softmax = map (buildMatrixFromRows . map softMax . matrixRows) kqs_masked
       kqv :: [Matrix]
       kqv = zipWith matMul (map transposeMatrix vBlobs) kqs_softmax -- 32 times: [128 x 4] = [4 x 128] * [4 x 4]
-      output = attention_wo `matMul` transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
+      kqv_smashed = transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
+      output = attention_wo `matMul` kqv_smashed
   in output
 
 feedForward :: Layer -> Matrix -> Matrix
@@ -193,8 +195,12 @@ buildMatrixFromRows rows =
 matrixConcat :: [Matrix] -> Matrix
 matrixConcat matrixList = Matrix $ concat $ map unMatrix matrixList
 
+
 silu :: Float -> Float
-silu x = x/(1+exp (-x))
+silu x =
+  let x_double :: Double
+      x_double = realToFrac x
+  in realToFrac $ x_double/(1+exp (-x_double))
 
 replicateVector :: Vector -> Int -> Matrix
 replicateVector (Vector vals) i = Matrix $ replicate i vals
@@ -214,9 +220,11 @@ matrixMap :: (Float -> Float) -> Matrix -> Matrix
 matrixMap f (Matrix m) = Matrix $ map (map f) m
 matrixMap _ (QuantizedMatrix _) = error "matrixMap not defined for QuantizedMatrix"
 
+exp' :: Float -> Float
+exp' = fromHalf . toHalf . exp . fromHalf . toHalf
 
 softMax :: Vector -> Vector
-softMax (Vector theRow) = Vector . normalize . map (exp . (\v -> v - maximum theRow)) $ theRow
+softMax (Vector theRow) = Vector . normalize . map (exp' . (\v -> v - maximum theRow)) $ theRow
 softMax (QuantizedVector _) = error "softMax not defined for QuantizedVector"
 
 filterUpperDiagonal :: Matrix -> Matrix
@@ -229,7 +237,10 @@ filterAfter i theRow = take i theRow ++ replicate (length theRow - i) (-inf)
   where inf = 1/0
 
 normalize :: [Float] -> [Float]
-normalize values = map (/sum values) values
+normalize values =
+  let theSum = sum $ map realToFrac values :: Double
+      scaleVal = realToFrac $ 1/theSum :: Float
+  in map (* scaleVal) values
 
 
 matAdd :: Matrix -> Matrix -> Matrix
@@ -252,6 +263,8 @@ formatShortMatrix m =
 matMul :: Matrix -> Matrix -> Matrix
 --matMul x y | trace ("multiplying: " ++ formatShortMatrix x ++ " * " ++ formatShortMatrix y ++ ", num ops = " ++ show (height x * width x * width y) ++ ", num vec ops = " ++ show (width x * width y)) False = undefined
 matMul x y | height x /= height y = error $ "matrix heights don't match: " ++ show (height x) ++ " /= " ++ show (height y)
+matMul x@(Matrix xVals) (Matrix yVals) | height x < width x =
+  Matrix $ map (\yRow -> map (\xCol -> xCol `slowDot` yRow) xVals) yVals
 matMul x@(Matrix _) y@(Matrix _) =
   Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
 matMul x@(QuantizedMatrix _) y@(Matrix _) =
@@ -262,13 +275,30 @@ quantizeMatrix :: Matrix -> Matrix
 quantizeMatrix (Matrix vectors) = QuantizedMatrix (map quantize vectors)
 quantizeMatrix _ = error "unsupported case in quantizeMatrix"
 
+slowDot :: [Float] -> [Float] -> Float
+--slowDot x y = realToFrac $ sum $ zipWith (*) (map realToFrac x) (map realToFrac y :: [Double])
+--slowDot x y = sum $ zipWith (*) x y
+
+slowDot x y = zipFold (\v1 v2 s -> fusionMultiplySumAllFloat v1 v2 s) (0.0::Float) x y
+
 dot :: Vector -> Vector -> Float
 --dot x y | trace ("dot, length x = " ++ show (vectorLength x) ++ ", length y = " ++ show (vectorLength y)) False = undefined
 dot x y | vectorLength x /= vectorLength y = error $ "dot product lengths do not match: " ++ show (vectorLength x) ++ "/=" ++ show (vectorLength y)
-dot (Vector x) (Vector y) = sum $ zipWith (*) x y
+dot (Vector x) (Vector y) = realToFrac $ zipFold fusionMultiplySum (0.0::Double) x y
+  --sum $ zipWith (*) (map realToFrac x::[Double]) (map realToFrac y::[Double])
 dot (QuantizedVector x) (Vector y) = x `quantized_vector_dot` quantize y
 dot (QuantizedVector x) (QuantizedVector y) = x `quantized_vector_dot` y
 dot (Vector x) (QuantizedVector y) = quantize x `quantized_vector_dot` y
+
+zipFold :: (a -> b -> c -> c) -> c -> [a] -> [b] -> c
+zipFold _ initVal [] [] = initVal
+zipFold f initVal (firstx:restx) (firsty:resty) =
+  let newVal = f firstx firsty initVal
+  in zipFold f newVal restx resty
+zipFold _ _ _ _ = error "mismatched array sizes in call to zipFold"
+
+foreign import ccall "fusionMultiplySum" fusionMultiplySum :: Float -> Float -> Double -> Double
+foreign import ccall "fusionMultiplySumAllFloat" fusionMultiplySumAllFloat :: Float -> Float -> Float -> Float
 
 vectorLength :: Vector -> Int
 vectorLength (Vector elems) = length elems
@@ -307,8 +337,8 @@ quantize_single_block floats =
 
 meanNorm :: Matrix -> Matrix
 meanNorm m@(Matrix theFloats) = 
-  let squares = map ((map (**2))) theFloats
-      squaresAsDoubles = map (map realToFrac) squares :: [[Double]]
-      scaleFactors = map ((1/) . sqrt . (+1e-5)) $ map ((/realToFrac (height m)) . sum) squaresAsDoubles
-  in Matrix $ zipWith (\sf f -> map (sf*) f) (map realToFrac scaleFactors) theFloats
+  let squaresSummed = zipWith ((\v1 v2 -> zipFold fusionMultiplySum (0.0::Double) v1 v2)) theFloats theFloats
+      mean = map (/realToFrac (height m)) squaresSummed :: [Double]
+      scaleFactors = map realToFrac $ map (1/) $ (map (sqrt . (+1e-5)) mean) :: [Float]
+  in Matrix $ zipWith (\sf f -> map (sf*) f) scaleFactors theFloats
 meanNorm (QuantizedMatrix _) = error "meanNorm not defined for QuantizedMatrix"

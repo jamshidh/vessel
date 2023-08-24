@@ -44,24 +44,79 @@ void printBytes(char *name, char *val) {
   printf("\n");
 }
 
-float vector_dot(int len, char *x, char *y) {
+const int floatSize = 4;
+const int nibbleSize = 16;
+const int blockSize = floatSize + nibbleSize;
+  
+double getThing(char *x, char *y, int i) {
   float sum = 0.0;
+
+  char *px = x+blockSize*i;
+  char *py = y+blockSize*i;
+  float *fx = (float*) px;
+  float *fy = (float *) py;
+  float dot = dot_Int4X32(px+floatSize, py+floatSize);
+  double val = ((double) (*fx * *fy)) * dot;
+  printf("partial sum = %a\n", val);
+
+  return val;
+}
+
+float vector_dot(int len, char *x, char *y) {
+  float sum0 = 0.0;
+  float sum1 = 0.0;
 
   //printBytes("x", x);
   //printBytes("y", y);
 
-  const int floatSize = 4;
-  const int nibbleSize = 16;
-  const int blockSize = floatSize + nibbleSize;
-  
-  for(int i = 0; i < len; i++) {
-    char *px = x+blockSize*i;
-    char *py = y+blockSize*i;
-    float *fx = (float*) px;
-    float *fy = (float *) py;
-    //printf("f1 = %a\n", *f1);
-    //printf("f2 = %a\n", *f2);
-    sum += *fx * *fy * dot_Int4X32(px+floatSize, py+floatSize);
+  for(int i = 0; i < len; i += 2) {
+    {
+      char *px = x+blockSize*i;
+      char *py = y+blockSize*i;
+      float *fx = (float*) px;
+      float *fy = (float *) py;
+      float dot = dot_Int4X32(px+floatSize, py+floatSize);
+      float val = *fx * *fy * dot;
+      //printf("partial sum = %a\n", val);
+
+      sum0 += *fx * *fy * dot;;
+
+    }
+
+    {
+      char *px = x+blockSize*(i+1);
+      char *py = y+blockSize*(i+1);
+      float *fx = (float*) px;
+      float *fy = (float *) py;
+      float dot = dot_Int4X32(px+floatSize, py+floatSize);
+      float val = *fx * *fy * dot;
+      //printf("partial sum = %a\n", val);
+
+      sum1 += *fx * *fy * dot;;
+
+    }
+
+
+    
+    //printf("partial sum0 = %a\n", sum0);
+    //printf("partial sum1 = %a\n", sum1);
   }
+  float sum = sum0 + sum1;
+  //printf("sum0 = %a\n", sum0);
+  //printf("sum1 = %a\n", sum1);
+  //printf("sum = %a\n", sum);
+  //exit(1);
   return sum;
+}
+
+double fusionMultiplySum(float x, float y, double s) {
+  double ret = s;
+  ret += x*y;
+  return ret;
+}
+
+float fusionMultiplySumAllFloat(float x, float y, float s) {
+  float ret = s;
+  ret += x*y;
+  return ret;
 }
