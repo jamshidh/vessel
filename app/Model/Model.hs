@@ -96,9 +96,9 @@ rawModelToModel rawModel =
     tokens = tokens' rawModel,
     layers = map (getLayer rawModel) [0..fromIntegral (n_layer rawModel-1)],
     --norm = Vector [], --dummy value for deepseq
-    norm = error "norm undefined",
+    norm = getModelVector rawModel "norm.weight",
     --output = Matrix [[]], --dummy value for deepseq
-    output = error "output undefined",
+    output = getModelMatrix rawModel "output.weight",
     tokenEmbeddings = getModelMatrix rawModel "tok_embeddings.weight"
   }
 
