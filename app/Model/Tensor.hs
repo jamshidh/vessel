@@ -207,7 +207,7 @@ instance Format Vector where
 
 instance Format Matrix where
   format (Matrix []) = "<empty matrix>"
-  format (Matrix x) = "[" ++ show (length x) ++ " x " ++ show (length $ head x) ++ "]\n"
+  format (Matrix x) = "[" ++ show (length x) ++ " x " ++ show (length $ head x) ++ "] (sum=" ++ format(sum (join x)) ++ ")\n"
   --             ++ unlines (map (("    " ++) . show . take 5) (take 5 x))
                       ++ unlines (map showLine (take 5 x))
                       ++ (if length x > 5 then "    ....(etc)" else "")
