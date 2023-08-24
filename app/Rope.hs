@@ -13,8 +13,8 @@ embedPositions theArray =
       embedPosition theta position theValueTuple
   where
     for = flip map
-    indexToTheta :: Int -> Float
-    indexToTheta index = 10000.0 ** (-(fromIntegral index::Float)/fromIntegral (length $ head theArray))
+    indexToTheta :: Int -> Double
+    indexToTheta index = 10000.0 ** (-(fromIntegral index)/fromIntegral (length $ head theArray))
     pairTuples :: [a] -> [(a, a)]
     pairTuples = map listTo2Tuple . chunksOf 2
       where listTo2Tuple items =
@@ -24,10 +24,18 @@ embedPositions theArray =
     unpairTuples :: [(a, a)] -> [a]
     unpairTuples = concat . map (\(x, y) -> [x, y])
 
-embedPosition :: Float -> Int -> (Float, Float) -> (Float, Float)
+embedPosition :: Double -> Int -> (Float, Float) -> (Float, Float)
 embedPosition theta position (x, y) =
   (
-    x * cos alpha - y * sin alpha,
-    x * sin alpha + y * cos alpha
+    realToFrac $ x_double * cosalpha - y_double * sinalpha,
+    realToFrac $ x_double * sinalpha + y_double * cosalpha
   )
   where alpha = fromIntegral position * theta
+        cosalpha :: Double
+        cosalpha = cos alpha
+        sinalpha :: Double
+        sinalpha = sin alpha
+        x_double :: Double
+        x_double = realToFrac x
+        y_double :: Double
+        y_double = realToFrac y
