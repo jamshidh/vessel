@@ -21,7 +21,6 @@ import Control.DeepSeq
 import Control.Monad
 import Data.Binary
 import Data.Binary.Get
-import Data.Bits
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Internal as B
@@ -38,7 +37,7 @@ import Format
 import Model.Float ()
 import Model.Int4X32
 
-import Debug.Trace
+--import Debug.Trace
 
 data TensorType =
   Q4_0
@@ -96,13 +95,13 @@ instance Binary GenericTensor where
 
 tensorToMatrix :: GenericTensor -> Matrix
 tensorToMatrix t@GenericTensor{fType=F32} =
-  let width = dim_num_elems t !! 0
-      height = dim_num_elems t !! 1
-  in Matrix $ map (\i -> V.toList $ bytesToFloats $ B.take (fromIntegral $ 4 * height * i) $ B.drop (fromIntegral $ 4 * height * (i+1)) $ elems t) [0..width-1]
+  let width' = dim_num_elems t !! 0
+      height' = dim_num_elems t !! 1
+  in Matrix $ map (\i -> V.toList $ bytesToFloats $ B.take (fromIntegral $ 4 * height' * i) $ B.drop (fromIntegral $ 4 * height' * (i+1)) $ elems t) [0..width'-1]
 tensorToMatrix t@GenericTensor{fType=Q4_0} = 
-  let width = dim_num_elems t !! 1
-      height = dim_num_elems t !! 0
-  in QuantizedMatrix (map splitIntoQuantizedBlocks $ byteStringChunksOf (fromIntegral height * 20 `div` 32) $ elems t)
+  let --width' = dim_num_elems t !! 1
+      height' = dim_num_elems t !! 0
+  in QuantizedMatrix (map splitIntoQuantizedBlocks $ byteStringChunksOf (fromIntegral height' * 20 `div` 32) $ elems t)
 
 byteStringChunksOf :: Int -> ByteString -> [ByteString]
 byteStringChunksOf _ s | B.length s == 0 = []
@@ -152,7 +151,7 @@ bytesForRow Matrix{} _ = error "bytesForRow only implemented for Quantized matri
 
 
 getRow :: Matrix -> Int -> Vector
-getRow m i | trace ("getRow: " ++ format m ++ " " ++ show i) False = undefined
+--getRow m i | trace ("getRow: " ++ format m ++ " " ++ show i) False = undefined
 getRow (QuantizedMatrix matrixData) i = Vector . concat . map quantizedBlockToFloats . V.toList . (matrixData !!) $ i -- concat . map blockToFloats . splitIntoBlocks . bytesForRow m
 getRow _ _ = error "getRow not definted for non-quantized Matrix"
 
@@ -212,5 +211,6 @@ instance Format Matrix where
                       ++ unlines (map showLine (take 5 x))
                       ++ (if length x > 5 then "    ....(etc)" else "")
     where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take 5 $ v
+--    where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format $ v
   format m@QuantizedMatrix{} = "QuantizedMatrix [" ++ show (height m) ++ " x " ++ show (width m) ++ "]"
 
