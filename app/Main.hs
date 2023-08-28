@@ -23,7 +23,7 @@ import Model.Float ()
 import Model.Int4X32
 import Model.Model
 import Model.Tensor
---import Model.Token
+import Model.Token
 import Rope
 
 import Debug.Trace
@@ -50,13 +50,13 @@ doit = do
 
   --putStrLn $ model `deepseq` "abcd"
   
-{-
+
   let phrase = " Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
 
   let theTrie = tokensToTokenTrie $ tokens model
 
   let phraseTokens = 1:tokenize theTrie phrase
-  
+{-  
   let phraseTokensFromCPP = [1, 13866, 338, 385, 15278, 393, 16612, 263, 3414, 29889, 14350, 263, 2933, 393, 8210, 368, 4866, 29879, 278, 2009, 29889, 13, 13]
 
   putStrLn $ "phraseTokens: " ++ show phraseTokens
@@ -66,11 +66,12 @@ doit = do
   putStrLn $ show $ map (\i -> (i, format $ tokens model !! i)) phraseTokensFromCPP
 -}
 
-
+  putStrLn $ "phrase tokens: " ++ show phraseTokens
   
 --  putStrLn $ format rawModel
 
   let embd = [0,1,2,3]
+--  let embd = take 9 $ drop 9 phraseTokens
 
   let inputLayer = vectorsToMatrix $ map (getRow $ tokenEmbeddings model) embd
 
@@ -331,9 +332,10 @@ quantize floats = V.fromList $ map quantize_single_block $ chunksOf 32 floats
 quantize_single_block :: [Float] -> QuantizedBlock
 quantize_single_block floats | length floats /= 32 = error $ "quantization blocks must have length 32, actually is " ++ show (length floats)
 quantize_single_block floats =
-  QuantizedBlock d $ packInt4X32 $ map (round . (inverse_d *)) floats
+  QuantizedBlock d $ packInt4X32 nibbles
   where d = maximum (map abs floats)/7
         inverse_d = 1/d
+        nibbles = map ((\v -> v-8) . truncate . (8.5+) . (inverse_d *)) floats
 
 meanNorm :: Matrix -> Matrix
 meanNorm m@(Matrix theFloats) = 
