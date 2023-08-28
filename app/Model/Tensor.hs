@@ -208,9 +208,9 @@ instance Format Matrix where
   format (Matrix []) = "<empty matrix>"
   format (Matrix x) = "[" ++ show (length x) ++ " x " ++ show (length $ head x) ++ "] (sum=" ++ format(sum (join x)) ++ ")\n"
   --             ++ unlines (map (("    " ++) . show . take 5) (take 5 x))
-                      ++ unlines (map showLine (take 5 x))
-                      ++ (if length x > 5 then "    ....(etc)" else "")
-    where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take 5 $ v
---    where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format $ v
+                      ++ unlines (map showLine (take 10 x))
+                      ++ (if length x > 10 then "    ....(etc)" else "")
+--    where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take 5 $ v
+    where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format $ v
   format m@QuantizedMatrix{} = "QuantizedMatrix [" ++ show (height m) ++ " x " ++ show (width m) ++ "]"
 
