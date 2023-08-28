@@ -47,20 +47,6 @@ void printBytes(char *name, char *val) {
 const int floatSize = 4;
 const int nibbleSize = 16;
 const int blockSize = floatSize + nibbleSize;
-  
-double getThing(char *x, char *y, int i) {
-  float sum = 0.0;
-
-  char *px = x+blockSize*i;
-  char *py = y+blockSize*i;
-  float *fx = (float*) px;
-  float *fy = (float *) py;
-  float dot = dot_Int4X32(px+floatSize, py+floatSize);
-  double val = ((double) (*fx * *fy)) * dot;
-  printf("partial sum = %a\n", val);
-
-  return val;
-}
 
 float vector_dot(int len, char *x, char *y) {
   float sum0 = 0.0;
@@ -77,9 +63,10 @@ float vector_dot(int len, char *x, char *y) {
       float *fy = (float *) py;
       float dot = dot_Int4X32(px+floatSize, py+floatSize);
       float val = *fx * *fy * dot;
+
       //printf("partial sum = %a\n", val);
 
-      sum0 += *fx * *fy * dot;;
+      sum0 += *fx * *fy * dot;
 
     }
 
