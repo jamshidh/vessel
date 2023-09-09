@@ -204,13 +204,19 @@ instance Format Vector where
                       ++ show (take 10 x)
   format (QuantizedVector theData) = "QuantizedVector [" ++ show (V.length theData * 32) ++ "]"
 
+formatHeight :: Int
+formatHeight = 10
+
+formatWidth :: Int
+formatWidth = 5
+
 instance Format Matrix where
   format (Matrix []) = "<empty matrix>"
   format (Matrix x) = "[" ++ show (length x) ++ " x " ++ show (length $ head x) ++ "] (sum=" ++ format(sum (join x)) ++ ")\n"
-  --             ++ unlines (map (("    " ++) . show . take 5) (take 5 x))
-                      ++ unlines (map showLine (take 10 x))
-                      ++ (if length x > 10 then "    ....(etc)" else "")
---    where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take 5 $ v
-    where showLine v = (++ (if length v > 5 then " | ...." else "")) . ("    " ++) . intercalate " | " . map format $ v
+  --             ++ unlines (map (("    " ++) . show . take formatWidth) (take formatWidth x))
+                      ++ unlines (map showLine (take formatHeight x))
+                      ++ (if length x > formatHeight then "    ....(etc)" else "")
+--    where showLine v = (++ (if length v > formatWidth then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take formatWidth $ v
+    where showLine v = (++ (if length v > formatWidth then " | ...." else "")) . ("    " ++) . intercalate " | " . map format $ v
   format m@QuantizedMatrix{} = "QuantizedMatrix [" ++ show (height m) ++ " x " ++ show (width m) ++ "]"
 
