@@ -5,9 +5,9 @@ module Rope (
 
 import Data.List.Split
 
-embedPositions :: [[Float]] -> [[Float]]
-embedPositions theArray =
-  for (zip theArray [0..]) $ \(theColumn, position) ->
+embedPositions :: Int -> [[Float]] -> [[Float]]
+embedPositions startingPosition theArray =
+  for (zip theArray [startingPosition..]) $ \(theColumn, position) ->
     unpairTuples $
     for (zip (pairTuples theColumn) $ map indexToTheta [0, 2..]) $ \(theValueTuple, theta) ->
       embedPosition theta position theValueTuple

@@ -34,6 +34,7 @@ numberOfHeads = 32
 traceItem :: Format a => String -> a -> a
 traceItem name item = trace (name ++ ": " ++ format item) item
 
+type HistoryKVs = ([Matrix], [Matrix])
 
 main :: IO ()
 main = do
@@ -70,9 +71,24 @@ doit = do
   
 --  putStrLn $ format rawModel
 
-  let embd = [0,1,2,3]
---  let embd = take 9 $ drop 9 phraseTokens
+--  let embd = [0,1,2,3]
+--  let embd = phraseTokens
 
+  let phraseChunks = chunksOf 9 phraseTokens
+
+  let embd = take 9 phraseTokens
+
+  extras <- runNN model 0 (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix []))) $ phraseChunks !! 0
+
+  _ <- runNN model 9 extras $ phraseChunks !! 1
+
+
+  return ()
+
+
+
+runNN :: Model -> Int -> [HistoryKVs] -> [Int] -> IO [HistoryKVs]
+runNN model startingPosition extras embd = do
   let inputLayer = vectorsToMatrix $ map (getRow $ tokenEmbeddings model) embd
 
   value <- newIORef inputLayer
@@ -81,15 +97,13 @@ doit = do
 
 --  let outputLayer = applyPipeline (map processLayer $ reverse $ layers model) inputLayer
 
-  writeIORef value inputLayer
-
-
-  forM_ (layers model) $ \layer -> do
-    currentValue <- readIORef value
-    let output = processLayer layer currentValue
-    writeIORef value output
-    --putStrLn $ "output = " ++ format output
-
+  allExtras <- 
+    forM (zip (layers model) extras) $ \(layer, layerExtra) -> do
+      currentValue <- readIORef value
+      let (output, outputExtras) = processLayer layer startingPosition currentValue layerExtra
+      writeIORef value output
+      --putStrLn $ "output = " ++ format output
+      return outputExtras
 
   outputLayer <- readIORef value
 
@@ -106,6 +120,8 @@ doit = do
   let output' = output model `matMul` normalizedOutputLayer2
 
   putStrLn $ "output' = " ++ format output'
+
+  return allExtras
 
 
 
@@ -125,48 +141,61 @@ applyPipeline :: [(a->a)] -> a -> a
 applyPipeline = flip $ foldr ($)
 -}
 
-processLayer :: Layer -> Matrix -> Matrix
-processLayer layer inputLayer =
+processLayer :: Layer -> Int -> Matrix -> HistoryKVs -> (Matrix, HistoryKVs)
+processLayer layer startingPosition inputLayer extras =
   let normalized = meanNorm (traceItem ("[" ++ show (layerNumber layer) ++ "] inputLayer") inputLayer)
       --normalized2 = map (zipWith (*) $ attention_norm layer) normalized
       normalized2 = replicateVector (attention_norm layer) (width normalized) `simpleElementMul` normalized
-      afterAttention = selfAttention layer normalized2
-      inputFF = afterAttention `matAdd` inputLayer -- normalized2
+      (afterAttention, afterExtras) = selfAttention layer startingPosition normalized2 extras
+      inputFF = traceItem "inputFF" $
+                afterAttention `matAdd` inputLayer -- normalized2
       outputFF = feedForward layer inputFF
       outputLayer = outputFF `matAdd` inputFF
-  in outputLayer
+  in (outputLayer, afterExtras)
   
 instance Format [Matrix] where
   --format x = "(" ++ format (sum (join $ map join $ transpose $ map unMatrix x)) ++ ") head = " ++ format (head x)
   format x = "(" ++ format (sum (join $ map join $ map unMatrix x)) ++ ") head = " ++ format (head x)
 
-selfAttention :: Layer -> Matrix -> Matrix
-selfAttention Layer{..} inputSA =
+selfAttention :: Layer -> Int -> Matrix -> HistoryKVs -> (Matrix, HistoryKVs)
+selfAttention Layer{..} startingPosition inputSA (extraKCur, extraVCur) =
   let
       qCur = attention_wq `matMul` inputSA  -- [4x4096] = [??] * [??]
       kCur = attention_wk `matMul` inputSA
       vCur = attention_wv `matMul` inputSA
       headSize = height kCur `div` numberOfHeads
+      kBlobs' :: [Matrix]
+      kBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ unMatrix kCur
+      kBlobs'' :: [Matrix]
+      kBlobs'' = zipWith (\x y -> (matrixConcat [x, y])) extraKCur kBlobs'
+--               (\(first:rest) -> (matrixConcat [traceItem "extraKCur" extraKCur, first]):rest) kBlobs'
       kBlobs :: [Matrix]
-      kBlobs = map (Matrix . embedPositions) $ transpose $ map (chunksOf headSize) $ unMatrix kCur
+      kBlobs = map (Matrix . embedPositions 0 . unMatrix) kBlobs''
       qBlobs :: [Matrix]
-      qBlobs = map (Matrix . embedPositions) $ transpose $ map (chunksOf headSize) $ unMatrix qCur
+      qBlobs = map (Matrix . embedPositions startingPosition) $ transpose $ map (chunksOf headSize) $ unMatrix qCur
+      vBlobs' :: [Matrix]
+      vBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ unMatrix vCur
       vBlobs :: [Matrix]
-      vBlobs = map Matrix $ transpose $ map (chunksOf headSize) $ unMatrix vCur
+      vBlobs = zipWith (\x y -> (matrixConcat [x, y])) extraVCur vBlobs'
+--               (\(first:rest) -> (matrixConcat [traceItem "extraVCur" extraVCur, first]):rest) vBlobs'
+
+
+--      vBlobs :: [Matrix]
+--      vBlobs = map Matrix $ transpose $ map (chunksOf headSize) $ unMatrix vCur
       kqs :: [Matrix]
       kqs = zipWith matMul kBlobs qBlobs -- 32 times: [4 x 4] = [4 x 128] * [4 x 128]
       kqs_scaled :: [Matrix]
       kqs_scaled = --map (matrixMap (/sqrt 128.0)) kqs
                    map (matrixMap (* (0x1.6a09e6p-4))) kqs
       kqs_masked :: [Matrix]
-      kqs_masked = map filterUpperDiagonal kqs_scaled
+      kqs_masked = map (filterUpperDiagonal startingPosition) kqs_scaled
       kqs_softmax :: [Matrix]
       kqs_softmax = map (buildMatrixFromRows . map softMax . matrixRows) kqs_masked
       kqv :: [Matrix]
       kqv = zipWith matMul (map transposeMatrix vBlobs) kqs_softmax -- 32 times: [128 x 4] = [4 x 128] * [4 x 4]
       kqv_smashed = transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
       output = attention_wo `matMul` kqv_smashed
-  in output
+  in (output, (kBlobs', vBlobs'))
 
 feedForward :: Layer -> Matrix -> Matrix
 feedForward Layer{..} inpFF = 
@@ -228,9 +257,9 @@ softMax :: Vector -> Vector
 softMax (Vector theRow) = Vector . normalize . map (exp' . (\v -> v - maximum theRow)) $ theRow
 softMax (QuantizedVector _) = error "softMax not defined for QuantizedVector"
 
-filterUpperDiagonal :: Matrix -> Matrix
-filterUpperDiagonal (Matrix theMatrix) = Matrix $ map (\(theRow, i) -> filterAfter i theRow) $ zip theMatrix [1..]
-filterUpperDiagonal (QuantizedMatrix _) = error "filterUpperDiagonal not defined for QuantizedMatrix"
+filterUpperDiagonal :: Int -> Matrix -> Matrix
+filterUpperDiagonal startingPosition (Matrix theMatrix) = Matrix $ map (\(theRow, i) -> filterAfter (startingPosition + i) theRow) $ zip theMatrix [1..]
+filterUpperDiagonal _ (QuantizedMatrix _) = error "filterUpperDiagonal not defined for QuantizedMatrix"
 
 
 filterAfter :: Int -> [Float] -> [Float]
@@ -263,7 +292,10 @@ formatShortMatrix m =
 
 matMul :: Matrix -> Matrix -> Matrix
 --matMul x y | trace ("multiplying: " ++ formatShortMatrix x ++ " * " ++ formatShortMatrix y ++ ", num ops = " ++ show (height x * width x * width y) ++ ", num vec ops = " ++ show (width x * width y)) False = undefined
-matMul x y | height x /= height y = error $ "matrix heights don't match: " ++ show (height x) ++ " /= " ++ show (height y)
+matMul x y | height x /= height y = error $ "matrix heights don't match:\n" ++
+             "x size is: [" ++ show (height x) ++ " x " ++ show (width x) ++ "]\n" ++
+             "y size is: [" ++ show (height y) ++ " x " ++ show (width y) ++ "]\n" ++
+             show (height x) ++ " /= " ++ show (height y)
 matMul x@(Matrix xVals) (Matrix yVals) | height x < width x =
   Matrix $ map (\yRow -> map (\xCol -> xCol `slowDot` yRow) xVals) yVals
 matMul x@(Matrix _) y@(Matrix _) =
