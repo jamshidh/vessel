@@ -80,8 +80,15 @@ doit = do
 
   extras <- runNN model 0 (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix []))) $ phraseChunks !! 0
 
-  _ <- runNN model 9 extras $ phraseChunks !! 1
+  extras2 <- runNN model 9 extras $ phraseChunks !! 1
+  
+  extras3 <- runNN model 18 extras2 $ phraseChunks !! 2
 
+  let prompt = chunksOf 9 $ 1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n"
+
+  extras4 <- runNN model 23 extras3 $ prompt !! 0
+  
+  _ <- runNN model 32 extras4 $ prompt !! 1
 
   return ()
 
@@ -195,7 +202,7 @@ selfAttention Layer{..} startingPosition inputSA (extraKCur, extraVCur) =
       kqv = zipWith matMul (map transposeMatrix vBlobs) kqs_softmax -- 32 times: [128 x 4] = [4 x 128] * [4 x 4]
       kqv_smashed = transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
       output = attention_wo `matMul` kqv_smashed
-  in (output, (kBlobs', vBlobs'))
+  in (output, (kBlobs'', vBlobs))
 
 feedForward :: Layer -> Matrix -> Matrix
 feedForward Layer{..} inpFF = 
