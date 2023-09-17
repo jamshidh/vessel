@@ -216,7 +216,7 @@ instance Format Matrix where
   --             ++ unlines (map (("    " ++) . show . take formatWidth) (take formatWidth x))
                       ++ unlines (map showLine (take formatHeight x))
                       ++ (if length x > formatHeight then "    ....(etc)" else "")
---    where showLine v = (++ (if length v > formatWidth then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take formatWidth $ v
-    where showLine v = (++ (if length v > formatWidth then " | ...." else "")) . ("    " ++) . intercalate " | " . map format $ v
+    where showLine v = (++ (if length v > formatWidth then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take formatWidth $ v
+--    where showLine v = (++ (if length v > formatWidth then " | ...." else "")) . ("    " ++) . intercalate " | " . map format $ v
   format m@QuantizedMatrix{} = "QuantizedMatrix [" ++ show (height m) ++ " x " ++ show (width m) ++ "]"
 
