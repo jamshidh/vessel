@@ -76,25 +76,23 @@ doit = do
 
   let phraseChunks = chunksOf 9 phraseTokens
 
-  let embd = take 9 phraseTokens
+  (_, extras) <- runNN model 0 (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix []))) $ phraseChunks !! 0
 
-  extras <- runNN model 0 (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix []))) $ phraseChunks !! 0
-
-  extras2 <- runNN model 9 extras $ phraseChunks !! 1
+  (_, extras2) <- runNN model 9 extras $ phraseChunks !! 1
   
-  extras3 <- runNN model 18 extras2 $ phraseChunks !! 2
+  (_, extras3) <- runNN model 18 extras2 $ phraseChunks !! 2
 
   let prompt = chunksOf 9 $ 1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n"
 
-  extras4 <- runNN model 23 extras3 $ prompt !! 0
+  (_, extras4) <- runNN model 23 extras3 $ prompt !! 0
   
-  _ <- runNN model 32 extras4 $ prompt !! 1
+  (Matrix output, _) <- runNN model 32 extras4 $ prompt !! 1
 
-  return ()
+  putStrLn $ "output = " ++ format (last output)
 
 
 
-runNN :: Model -> Int -> [HistoryKVs] -> [Int] -> IO [HistoryKVs]
+runNN :: Model -> Int -> [HistoryKVs] -> [Int] -> IO (Matrix, [HistoryKVs])
 runNN model startingPosition extras embd = do
   let inputLayer = vectorsToMatrix $ map (getRow $ tokenEmbeddings model) embd
 
@@ -126,9 +124,7 @@ runNN model startingPosition extras embd = do
 
   let output' = output model `matMul` normalizedOutputLayer2
 
-  putStrLn $ "output' = " ++ format output'
-
-  return allExtras
+  return (output', allExtras)
 
 
 
