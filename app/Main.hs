@@ -76,24 +76,40 @@ doit = do
 
   let phraseChunks = chunksOf 9 phraseTokens
 
-  (_, extras) <- runNN model 0 (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix []))) $ phraseChunks !! 0
-
-  (_, extras2) <- runNN model 9 extras $ phraseChunks !! 1
+  let emptyHistory = (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix [])))
   
-  (_, extras3) <- runNN model 18 extras2 $ phraseChunks !! 2
+  history1 <- handleNewTokens model 0 emptyHistory $ phraseChunks !! 0
+
+  history2 <- handleNewTokens model 9 history1 $ phraseChunks !! 1
+
+  history3 <- handleNewTokens model 18 history2 $ phraseChunks !! 2
 
   let prompt = chunksOf 9 $ 1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n"
 
-  (_, extras4) <- runNN model 23 extras3 $ prompt !! 0
-  
-  (Matrix output, _) <- runNN model 32 extras4 $ prompt !! 1
+  history4 <- handleNewTokens model 23 history3 $ prompt !! 0
 
-  let topLogits = take 10 $ reverse $ sortOn snd (zip [0..] $ last output)
-  
-  --putStrLn $ "top logits = " ++ show topLogits
+  _ <- handleNewTokens model 32 history4 $ prompt !! 1
 
-  forM_ topLogits $ \(tokenInt, logit) -> 
-    putStrLn $ format logit ++ ": " ++ show (tokens model !! tokenInt)
+  putStrLn "done"
+
+
+handleNewTokens :: Model -> Int -> [HistoryKVs] -> [Int] -> IO [HistoryKVs]
+handleNewTokens model position historyKVs phrase = do
+  putStrLn $ "input phrase = " ++ show (map (format . (tokens model !!)) phrase)
+  (Matrix output, extras) <- runNN model position historyKVs phrase
+
+  putStrLn $ format (last output)
+
+  printTopTokens model $ reverse $ sortOn snd (zip [0..] $ last output)
+
+  return extras
+  
+
+printTopTokens :: Model -> [(Int, Float)] -> IO ()
+printTopTokens model tokens' = do
+  let topTokens = take 10 tokens'
+  forM_ topTokens $ \(tokenInt, logit) -> 
+    putStrLn $ format logit ++ ": " ++ show (format $ tokens model !! tokenInt)
 
 
 
@@ -102,8 +118,6 @@ runNN model startingPosition extras embd = do
   let inputLayer = vectorsToMatrix $ map (getRow $ tokenEmbeddings model) embd
 
   value <- newIORef inputLayer
-  
-  putStrLn $ "inputLayer = " ++ format inputLayer
 
 --  let outputLayer = applyPipeline (map processLayer $ reverse $ layers model) inputLayer
 
@@ -117,21 +131,13 @@ runNN model startingPosition extras embd = do
 
   outputLayer <- readIORef value
 
-  putStrLn $ "outputLayer = " ++ format outputLayer
-
   let normalizedOutputLayer = meanNorm outputLayer
 
-  putStrLn $ "normalizedOutputLayer = " ++ format normalizedOutputLayer
-
   let normalizedOutputLayer2 = replicateVector (norm model) (width normalizedOutputLayer) `simpleElementMul` normalizedOutputLayer
-
-  putStrLn $ "normalizedOutputLayer2 = " ++ format normalizedOutputLayer2
 
   let output' = output model `matMul` normalizedOutputLayer2
 
   return (output', allExtras)
-
-
 
 vectorsToMatrix :: [Vector] -> Matrix
 vectorsToMatrix vectors = 
@@ -151,11 +157,11 @@ applyPipeline = flip $ foldr ($)
 
 processLayer :: Layer -> Int -> Matrix -> HistoryKVs -> (Matrix, HistoryKVs)
 processLayer layer startingPosition inputLayer extras =
-  let normalized = meanNorm (traceItem ("[" ++ show (layerNumber layer) ++ "] inputLayer") inputLayer)
+  let normalized = meanNorm ( {-traceItem ("[" ++ show (layerNumber layer) ++ "] inputLayer") -} inputLayer)
       --normalized2 = map (zipWith (*) $ attention_norm layer) normalized
       normalized2 = replicateVector (attention_norm layer) (width normalized) `simpleElementMul` normalized
       (afterAttention, afterExtras) = selfAttention layer startingPosition normalized2 extras
-      inputFF = traceItem "inputFF" $
+      inputFF = --traceItem "inputFF" $
                 afterAttention `matAdd` inputLayer -- normalized2
       outputFF = feedForward layer inputFF
       outputLayer = outputFF `matAdd` inputFF
