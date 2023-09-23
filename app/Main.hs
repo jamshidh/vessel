@@ -10,7 +10,7 @@ import Control.Monad
 import Data.Binary
 import qualified Data.ByteString.Lazy as BL
 import Data.IORef
-import Data.List (transpose)
+import Data.List (sortOn, transpose)
 import Data.List.Split
 import qualified Data.Vector.Storable as V
 import Foreign.Ptr
@@ -88,7 +88,12 @@ doit = do
   
   (Matrix output, _) <- runNN model 32 extras4 $ prompt !! 1
 
-  putStrLn $ "output = " ++ format (last output)
+  let topLogits = take 10 $ reverse $ sortOn snd (zip [0..] $ last output)
+  
+  --putStrLn $ "top logits = " ++ show topLogits
+
+  forM_ topLogits $ \(tokenInt, logit) -> 
+    putStrLn $ format logit ++ ": " ++ show (tokens model !! tokenInt)
 
 
 
