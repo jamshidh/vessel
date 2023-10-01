@@ -88,7 +88,12 @@ doit = do
 
   (tokenHistory4, history4) <- handleNewTokens model tokenHistory3 23 history3 $ prompt !! 0
 
-  _ <- handleNewTokens model tokenHistory4 32 history4 $ prompt !! 1
+  (tokenHistory5, history5) <- handleNewTokens model tokenHistory4 32 history4 $ prompt !! 1
+
+  let prompt2 = tokenize theTrie "2"
+
+  _ <- handleNewTokens model tokenHistory5 41 history5 $ prompt2
+
 
   putStrLn "done"
 
@@ -98,7 +103,7 @@ handleNewTokens model tokenHistory position historyKVs phrase = do
   putStrLn $ "input phrase = " ++ show (map (format . (tokens model !!)) phrase)
   (Matrix output, extras) <- runNN model position historyKVs phrase
 
-  putStrLn $ format (last output)
+  putStrLn $ "output logits: " ++ format (last output)
 
   printTopTokens model (tokenHistory ++ phrase) $ zip [0..] $ last output
 
@@ -119,7 +124,8 @@ printTopTokens model tokenHistory tokens' = do
   let tokensScaled = map (\(t, l) -> (t, scale tokenHistoryLast (t, l))) tokens'
       sortedTokens = reverse $ sortOn snd tokensScaled
       topTokensScaled = take 40 sortedTokens
-      tokenHistoryLast = tokenHistory
+      tokenHistoryLast = --traceItem "tokenHistory"
+                         tokenHistory
       allLogits = map snd topTokensScaled
       maxLogit = maximum allLogits
       nonNormalizedProbs = map (fmap (exp . (\v -> v - maxLogit))) topTokensScaled
@@ -128,7 +134,8 @@ printTopTokens model tokenHistory tokens' = do
   forM_ probs $ \(tokenInt, prob) ->
     putStrLn $ format prob ++ ": " ++ show ((\x -> format x ++ ", " ++ show tokenInt) $ tokens model !! tokenInt)
 
-
+--instance Format [Int] where
+--  format = show
 
 runNN :: Model -> Int -> [HistoryKVs] -> [Int] -> IO (Matrix, [HistoryKVs])
 runNN model startingPosition extras embd = do
