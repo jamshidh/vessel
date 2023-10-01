@@ -78,38 +78,51 @@ doit = do
 
   let emptyHistory = (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix [])))
   
-  (tokenHistory1, history1) <- handleNewTokens model [0] emptyHistory $ phraseChunks !! 0
+  (tokensWithProbs1, tokenHistory1, history1) <- handleNewTokens model [0] emptyHistory $ phraseChunks !! 0
 
-  (tokenHistory2, history2) <- handleNewTokens model tokenHistory1 history1 $ phraseChunks !! 1
+  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs1)
 
-  (tokenHistory3, history3) <- handleNewTokens model tokenHistory2 history2 $ phraseChunks !! 2
+  (tokensWithProbs2, tokenHistory2, history2) <- handleNewTokens model tokenHistory1 history1 $ phraseChunks !! 1
+
+  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs2)
+
+  (tokensWithProbs3, tokenHistory3, history3) <- handleNewTokens model tokenHistory2 history2 $ phraseChunks !! 2
+
+  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs3)
 
   let prompt = chunksOf 9 $ 1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n"
 
-  (tokenHistory4, history4) <- handleNewTokens model tokenHistory3 history3 $ prompt !! 0
+  (tokensWithProbs4, tokenHistory4, history4) <- handleNewTokens model tokenHistory3 history3 $ prompt !! 0
 
-  (tokenHistory5, history5) <- handleNewTokens model tokenHistory4 history4 $ prompt !! 1
+  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs4)
+
+  (tokensWithProbs5, tokenHistory5, history5) <- handleNewTokens model tokenHistory4 history4 $ prompt !! 1
+
+  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs5)
 
   let prompt2 = tokenize theTrie "2"
 
-  _ <- handleNewTokens model tokenHistory5 history5 $ prompt2
+  (tokensWithProbs6, _, _) <- handleNewTokens model tokenHistory5 history5 $ prompt2
+
+  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs6)
 
   putStrLn "done"
 
 
-handleNewTokens :: Model -> [Int] -> [HistoryKVs] -> [Int] -> IO ([Int], [HistoryKVs])
+getNextToken :: [(Int, Float)] -> Int
+getNextToken = fst . head --just take the most probable for now
+
+handleNewTokens :: Model -> [Int] -> [HistoryKVs] -> [Int] -> IO ([(Int, Float)], [Int], [HistoryKVs])
 handleNewTokens model tokenHistory historyKVs phrase = do
   let position = length tokenHistory - 1
   putStrLn $ "input phrase = " ++ show (map (format . (tokens model !!)) phrase)
   (Matrix output, extras) <- runNN model position historyKVs phrase
 
-  putStrLn $ "output logits: " ++ format (last output)
+  --putStrLn $ "output logits: " ++ format (last output)
 
-  let tokensWithProbs = logitsToTopProbabilities model (tokenHistory ++ phrase) $ zip [0..] $ last output
+  let tokensWithProbs = logitsToTopProbabilities (tokenHistory ++ phrase) $ zip [0..] $ last output
 
-  printTopTokens tokensWithProbs
-  
-  return (tokenHistory ++ phrase, extras)
+  return (tokensWithProbs, tokenHistory ++ phrase, extras)
 
 
 scale :: [Int] -> (Int, Float) -> Float
@@ -121,8 +134,8 @@ scale tokenHistoryLast (t, l) =
           (_, False) -> 10/1.3
   in l*scaleFactor
 
-logitsToTopProbabilities :: Model -> [Int] -> [(Int, Float)] -> [(Token, Float)]
-logitsToTopProbabilities model tokenHistory tokens'= 
+logitsToTopProbabilities :: [Int] -> [(Int, Float)] -> [(Int, Float)]
+logitsToTopProbabilities tokenHistory tokens'= 
   let tokensScaled = map (\(t, l) -> (t, scale tokenHistoryLast (t, l))) tokens'
       sortedTokens = reverse $ sortOn snd tokensScaled
       topTokensScaled = take 40 sortedTokens
@@ -133,12 +146,12 @@ logitsToTopProbabilities model tokenHistory tokens'=
       nonNormalizedProbs = map (fmap (exp . (\v -> v - maxLogit))) topTokensScaled
       nonNormalizedSum = sum $ map snd nonNormalizedProbs
       probs = map (fmap (/nonNormalizedSum)) nonNormalizedProbs
-  in map (\(tokenInt, prob) -> (tokens model !! tokenInt, prob)) probs
+  in probs
 
-printTopTokens :: [(Token, Float)] -> IO ()
-printTopTokens tokensWithProbs =
-  forM_ tokensWithProbs $ \(token, prob) ->
-    putStrLn $ format prob ++ ": " ++ show (format token)
+printTopTokens :: Model -> [(Int, Float)] -> IO ()
+printTopTokens model tokensWithProbs =
+  forM_ tokensWithProbs $ \(tokenInt, prob) ->
+    putStrLn $ format prob ++ ": (" ++ show tokenInt ++ ") " ++ show (format $ tokens model !! tokenInt)
 
 --instance Format [Int] where
 --  format = show
