@@ -78,28 +78,28 @@ doit = do
 
   let emptyHistory = (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix [])))
   
-  (tokenHistory1, history1) <- handleNewTokens model [0] 0 emptyHistory $ phraseChunks !! 0
+  (tokenHistory1, history1) <- handleNewTokens model [0] emptyHistory $ phraseChunks !! 0
 
-  (tokenHistory2, history2) <- handleNewTokens model tokenHistory1 9 history1 $ phraseChunks !! 1
+  (tokenHistory2, history2) <- handleNewTokens model tokenHistory1 history1 $ phraseChunks !! 1
 
-  (tokenHistory3, history3) <- handleNewTokens model tokenHistory2 18 history2 $ phraseChunks !! 2
+  (tokenHistory3, history3) <- handleNewTokens model tokenHistory2 history2 $ phraseChunks !! 2
 
   let prompt = chunksOf 9 $ 1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n"
 
-  (tokenHistory4, history4) <- handleNewTokens model tokenHistory3 23 history3 $ prompt !! 0
+  (tokenHistory4, history4) <- handleNewTokens model tokenHistory3 history3 $ prompt !! 0
 
-  (tokenHistory5, history5) <- handleNewTokens model tokenHistory4 32 history4 $ prompt !! 1
+  (tokenHistory5, history5) <- handleNewTokens model tokenHistory4 history4 $ prompt !! 1
 
   let prompt2 = tokenize theTrie "2"
 
-  _ <- handleNewTokens model tokenHistory5 41 history5 $ prompt2
-
+  _ <- handleNewTokens model tokenHistory5 history5 $ prompt2
 
   putStrLn "done"
 
 
-handleNewTokens :: Model -> [Int] -> Int -> [HistoryKVs] -> [Int] -> IO ([Int], [HistoryKVs])
-handleNewTokens model tokenHistory position historyKVs phrase = do
+handleNewTokens :: Model -> [Int] -> [HistoryKVs] -> [Int] -> IO ([Int], [HistoryKVs])
+handleNewTokens model tokenHistory historyKVs phrase = do
+  let position = length tokenHistory - 1
   putStrLn $ "input phrase = " ++ show (map (format . (tokens model !!)) phrase)
   (Matrix output, extras) <- runNN model position historyKVs phrase
 
