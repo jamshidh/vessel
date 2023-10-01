@@ -78,38 +78,55 @@ doit = do
 
   let emptyHistory = (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix [])))
   
-  history1 <- handleNewTokens model 0 emptyHistory $ phraseChunks !! 0
+  (tokenHistory1, history1) <- handleNewTokens model [0] 0 emptyHistory $ phraseChunks !! 0
 
-  history2 <- handleNewTokens model 9 history1 $ phraseChunks !! 1
+  (tokenHistory2, history2) <- handleNewTokens model tokenHistory1 9 history1 $ phraseChunks !! 1
 
-  history3 <- handleNewTokens model 18 history2 $ phraseChunks !! 2
+  (tokenHistory3, history3) <- handleNewTokens model tokenHistory2 18 history2 $ phraseChunks !! 2
 
   let prompt = chunksOf 9 $ 1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n"
 
-  history4 <- handleNewTokens model 23 history3 $ prompt !! 0
+  (tokenHistory4, history4) <- handleNewTokens model tokenHistory3 23 history3 $ prompt !! 0
 
-  _ <- handleNewTokens model 32 history4 $ prompt !! 1
+  _ <- handleNewTokens model tokenHistory4 32 history4 $ prompt !! 1
 
   putStrLn "done"
 
 
-handleNewTokens :: Model -> Int -> [HistoryKVs] -> [Int] -> IO [HistoryKVs]
-handleNewTokens model position historyKVs phrase = do
+handleNewTokens :: Model -> [Int] -> Int -> [HistoryKVs] -> [Int] -> IO ([Int], [HistoryKVs])
+handleNewTokens model tokenHistory position historyKVs phrase = do
   putStrLn $ "input phrase = " ++ show (map (format . (tokens model !!)) phrase)
   (Matrix output, extras) <- runNN model position historyKVs phrase
 
   putStrLn $ format (last output)
 
-  printTopTokens model $ reverse $ sortOn snd (zip [0..] $ last output)
+  printTopTokens model (tokenHistory ++ phrase) $ zip [0..] $ last output
 
-  return extras
-  
+  return (tokenHistory ++ phrase, extras)
 
-printTopTokens :: Model -> [(Int, Float)] -> IO ()
-printTopTokens model tokens' = do
-  let topTokens = take 10 tokens'
-  forM_ topTokens $ \(tokenInt, logit) -> 
-    putStrLn $ format logit ++ ": " ++ show (format $ tokens model !! tokenInt)
+
+scale :: [Int] -> (Int, Float) -> Float
+scale tokenHistoryLast (t, l) =
+  let scaleFactor =
+        case (t `elem` tokenHistoryLast, l<0.0) of
+          (False, _) -> 10
+          (_, True) -> 10*1.3
+          (_, False) -> 10/1.3
+  in l*scaleFactor
+
+printTopTokens :: Model -> [Int] -> [(Int, Float)] -> IO ()
+printTopTokens model tokenHistory tokens' = do
+  let tokensScaled = map (\(t, l) -> (t, scale tokenHistoryLast (t, l))) tokens'
+      sortedTokens = reverse $ sortOn snd tokensScaled
+      topTokensScaled = take 40 sortedTokens
+      tokenHistoryLast = tokenHistory
+      allLogits = map snd topTokensScaled
+      maxLogit = maximum allLogits
+      nonNormalizedProbs = map (fmap (exp . (\v -> v - maxLogit))) topTokensScaled
+      nonNormalizedSum = sum $ map snd nonNormalizedProbs
+      probs = map (fmap (/nonNormalizedSum)) nonNormalizedProbs
+  forM_ probs $ \(tokenInt, prob) ->
+    putStrLn $ format prob ++ ": " ++ show ((\x -> format x ++ ", " ++ show tokenInt) $ tokens model !! tokenInt)
 
 
 
