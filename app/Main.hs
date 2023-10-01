@@ -7,6 +7,8 @@ module Main (main) where
 
 --import Control.DeepSeq
 import Control.Monad
+import Control.Monad.IO.Class
+import qualified Control.Monad.Trans.State as State
 import Data.Binary
 import qualified Data.ByteString.Lazy as BL
 import Data.IORef
@@ -16,6 +18,8 @@ import qualified Data.Vector.Storable as V
 import Foreign.Ptr
 import Numeric.Half
 import System.IO.Unsafe
+
+import Converse
 
 import Format
 
@@ -33,8 +37,6 @@ numberOfHeads = 32
 
 traceItem :: Format a => String -> a -> a
 traceItem name item = trace (name ++ ": " ++ format item) item
-
-type HistoryKVs = ([Matrix], [Matrix])
 
 main :: IO ()
 main = do
@@ -74,37 +76,40 @@ doit = do
 --  let embd = [0,1,2,3]
 --  let embd = phraseTokens
 
-  let phraseChunks = chunksOf 9 phraseTokens
+  runConverse $ do
+    let phraseChunks = chunksOf 9 phraseTokens
 
-  let emptyHistory = (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix [])))
+    let emptyHistory = (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix [])))
   
-  (tokensWithProbs1, tokenHistory1, history1) <- handleNewTokens model [0] emptyHistory $ phraseChunks !! 0
+    tokensWithProbs1 <- handleNewTokens model $ phraseChunks !! 0
 
-  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs1)
+    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs1)
 
-  (tokensWithProbs2, tokenHistory2, history2) <- handleNewTokens model tokenHistory1 history1 $ phraseChunks !! 1
+    tokensWithProbs2 <- handleNewTokens model $ phraseChunks !! 1
 
-  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs2)
+    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs2)
 
-  (tokensWithProbs3, tokenHistory3, history3) <- handleNewTokens model tokenHistory2 history2 $ phraseChunks !! 2
+    tokensWithProbs3 <- handleNewTokens model $ phraseChunks !! 2
 
-  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs3)
+    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs3)
 
-  let prompt = chunksOf 9 $ 1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n"
+    let prompt = chunksOf 9 $ 1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n"
 
-  (tokensWithProbs4, tokenHistory4, history4) <- handleNewTokens model tokenHistory3 history3 $ prompt !! 0
+    tokensWithProbs4 <- handleNewTokens model $ prompt !! 0
 
-  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs4)
+    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs4)
 
-  (tokensWithProbs5, tokenHistory5, history5) <- handleNewTokens model tokenHistory4 history4 $ prompt !! 1
+    tokensWithProbs5 <- handleNewTokens model $ prompt !! 1
 
-  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs5)
+    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs5)
 
-  let prompt2 = tokenize theTrie "2"
+    let prompt2 = tokenize theTrie "2"
 
-  (tokensWithProbs6, _, _) <- handleNewTokens model tokenHistory5 history5 $ prompt2
+    tokensWithProbs6 <- handleNewTokens model prompt2
 
-  putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs6)
+    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs6)
+
+    liftIO $ printTopTokens model tokensWithProbs6
 
   putStrLn "done"
 
@@ -112,17 +117,20 @@ doit = do
 getNextToken :: [(Int, Float)] -> Int
 getNextToken = fst . head --just take the most probable for now
 
-handleNewTokens :: Model -> [Int] -> [HistoryKVs] -> [Int] -> IO ([(Int, Float)], [Int], [HistoryKVs])
-handleNewTokens model tokenHistory historyKVs phrase = do
+handleNewTokens :: Model -> [Int] -> Converse [(Int, Float)]
+handleNewTokens model phrase = do
+  (tokenHistory, historyKVs) <- State.get
   let position = length tokenHistory - 1
-  putStrLn $ "input phrase = " ++ show (map (format . (tokens model !!)) phrase)
+  liftIO $ putStrLn $ "input phrase = " ++ show (map (format . (tokens model !!)) phrase)
   (Matrix output, extras) <- runNN model position historyKVs phrase
 
   --putStrLn $ "output logits: " ++ format (last output)
 
   let tokensWithProbs = logitsToTopProbabilities (tokenHistory ++ phrase) $ zip [0..] $ last output
 
-  return (tokensWithProbs, tokenHistory ++ phrase, extras)
+  State.put (tokenHistory ++ phrase, extras)
+  
+  return tokensWithProbs
 
 
 scale :: [Int] -> (Int, Float) -> Float
@@ -156,23 +164,23 @@ printTopTokens model tokensWithProbs =
 --instance Format [Int] where
 --  format = show
 
-runNN :: Model -> Int -> [HistoryKVs] -> [Int] -> IO (Matrix, [HistoryKVs])
+runNN :: Model -> Int -> [HistoryKVs] -> [Int] -> Converse (Matrix, [HistoryKVs])
 runNN model startingPosition extras embd = do
   let inputLayer = vectorsToMatrix $ map (getRow $ tokenEmbeddings model) embd
 
-  value <- newIORef inputLayer
+  value <- liftIO $ newIORef inputLayer
 
 --  let outputLayer = applyPipeline (map processLayer $ reverse $ layers model) inputLayer
 
   allExtras <- 
     forM (zip (layers model) extras) $ \(layer, layerExtra) -> do
-      currentValue <- readIORef value
+      currentValue <- liftIO $ readIORef value
       let (output, outputExtras) = processLayer layer startingPosition currentValue layerExtra
-      writeIORef value output
+      liftIO $ writeIORef value output
       --putStrLn $ "output = " ++ format output
       return outputExtras
 
-  outputLayer <- readIORef value
+  outputLayer <- liftIO $ readIORef value
 
   let normalizedOutputLayer = meanNorm outputLayer
 

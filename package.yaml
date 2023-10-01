@@ -34,4 +34,5 @@ executables:
       - deepseq
       - half
       - split
+      - transformers
       - vector
