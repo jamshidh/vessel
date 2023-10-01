@@ -105,8 +105,10 @@ handleNewTokens model tokenHistory historyKVs phrase = do
 
   putStrLn $ "output logits: " ++ format (last output)
 
-  printTopTokens model (tokenHistory ++ phrase) $ zip [0..] $ last output
+  let tokensWithProbs = logitsToTopProbabilities model (tokenHistory ++ phrase) $ zip [0..] $ last output
 
+  printTopTokens tokensWithProbs
+  
   return (tokenHistory ++ phrase, extras)
 
 
@@ -119,8 +121,8 @@ scale tokenHistoryLast (t, l) =
           (_, False) -> 10/1.3
   in l*scaleFactor
 
-printTopTokens :: Model -> [Int] -> [(Int, Float)] -> IO ()
-printTopTokens model tokenHistory tokens' = do
+logitsToTopProbabilities :: Model -> [Int] -> [(Int, Float)] -> [(Token, Float)]
+logitsToTopProbabilities model tokenHistory tokens'= 
   let tokensScaled = map (\(t, l) -> (t, scale tokenHistoryLast (t, l))) tokens'
       sortedTokens = reverse $ sortOn snd tokensScaled
       topTokensScaled = take 40 sortedTokens
@@ -131,8 +133,12 @@ printTopTokens model tokenHistory tokens' = do
       nonNormalizedProbs = map (fmap (exp . (\v -> v - maxLogit))) topTokensScaled
       nonNormalizedSum = sum $ map snd nonNormalizedProbs
       probs = map (fmap (/nonNormalizedSum)) nonNormalizedProbs
-  forM_ probs $ \(tokenInt, prob) ->
-    putStrLn $ format prob ++ ": " ++ show ((\x -> format x ++ ", " ++ show tokenInt) $ tokens model !! tokenInt)
+  in map (\(tokenInt, prob) -> (tokens model !! tokenInt, prob)) probs
+
+printTopTokens :: [(Token, Float)] -> IO ()
+printTopTokens tokensWithProbs =
+  forM_ tokensWithProbs $ \(token, prob) ->
+    putStrLn $ format prob ++ ": " ++ show (format token)
 
 --instance Format [Int] where
 --  format = show
