@@ -54,32 +54,14 @@ doit = do
   --putStrLn $ model `deepseq` "abcd"
   
 
-  let phrase = " Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
-
   let theTrie = tokensToTokenTrie $ tokens model
 
-  let phraseTokens = 1:tokenize theTrie phrase
-{-  
-  let phraseTokensFromCPP = [1, 13866, 338, 385, 15278, 393, 16612, 263, 3414, 29889, 14350, 263, 2933, 393, 8210, 368, 4866, 29879, 278, 2009, 29889, 13, 13]
-
-  putStrLn $ "phraseTokens: " ++ show phraseTokens
-  putStrLn $ "phraseTokensFromCPP: " ++ show phraseTokensFromCPP
-  
-  putStrLn $ show $ map (\i -> (i, format $ tokens model !! i)) phraseTokens
-  putStrLn $ show $ map (\i -> (i, format $ tokens model !! i)) phraseTokensFromCPP
--}
-
-  putStrLn $ "phrase tokens: " ++ show phraseTokens
-  
 --  putStrLn $ format rawModel
 
 --  let embd = [0,1,2,3]
---  let embd = phraseTokens
-
-
 
   let phraseChunks =
-        chunksOf 9 phraseTokens
+        chunksOf 9 (1:tokenize theTrie " Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n")
         ++ chunksOf 9 (1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n")
         ++ chunksOf 9 (tokenize theTrie "2")
 
