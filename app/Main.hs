@@ -76,40 +76,21 @@ doit = do
 --  let embd = [0,1,2,3]
 --  let embd = phraseTokens
 
+
+
+  let phraseChunks =
+        chunksOf 9 phraseTokens
+        ++ chunksOf 9 (1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n")
+        ++ chunksOf 9 (tokenize theTrie "2")
+
   runConverse $ do
-    let phraseChunks = chunksOf 9 phraseTokens
+    results <- 
+      forM phraseChunks $ \phraseChunk -> do
+      tokensWithProbs <- handleNewTokens model $ phraseChunk
+      liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs)
+      return tokensWithProbs
 
-    let emptyHistory = (replicate 32 (replicate 32 (Matrix []), replicate 32 (Matrix [])))
-  
-    tokensWithProbs1 <- handleNewTokens model $ phraseChunks !! 0
-
-    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs1)
-
-    tokensWithProbs2 <- handleNewTokens model $ phraseChunks !! 1
-
-    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs2)
-
-    tokensWithProbs3 <- handleNewTokens model $ phraseChunks !! 2
-
-    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs3)
-
-    let prompt = chunksOf 9 $ 1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n"
-
-    tokensWithProbs4 <- handleNewTokens model $ prompt !! 0
-
-    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs4)
-
-    tokensWithProbs5 <- handleNewTokens model $ prompt !! 1
-
-    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs5)
-
-    let prompt2 = tokenize theTrie "2"
-
-    tokensWithProbs6 <- handleNewTokens model prompt2
-
-    liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs6)
-
-    liftIO $ printTopTokens model tokensWithProbs6
+    liftIO $ printTopTokens model $ last results
 
   putStrLn "done"
 
