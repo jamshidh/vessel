@@ -61,7 +61,11 @@ instance Storable Int4X32 where
     return $ Int4X32 $ B.pack bytes
 
 packInt4X32 :: [Int8] -> Int4X32
-packInt4X32 nibbles = Int4X32 $ B.pack $ map (\[high, low] -> (low `shiftL` 4) + high) $ chunksOf 2 $ map (fromIntegral . (8+)) nibbles
+packInt4X32 nibbles =
+  Int4X32 $ B.pack $ map f $ chunksOf 2 $ map (fromIntegral . (8+)) nibbles
+  where
+    f [high, low] = (low `shiftL` 4) + high
+    f _ = error "internal error in calling packInt4X32"
 
 unpackInt4X32 :: Int4X32 -> [Int8]
 unpackInt4X32 (Int4X32 nibbles) = map ((\x -> x - 8) . fromIntegral) $ concat $ map (\x -> [x .&. 0xf, x `shiftR` 4]) $ B.unpack nibbles

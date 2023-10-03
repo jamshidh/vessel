@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Model.Tensor (
@@ -7,6 +8,7 @@ module Model.Tensor (
   QuantizedBlock(..),
   Matrix(..),
   Vector(..),
+  unMatrix,
   width,
   height,
   tensorToMatrix,
@@ -185,6 +187,12 @@ splitIntoQuantizedBlocks theData = V.fromList $ map parseQuantizedBlock $ splitI
 data Matrix = Matrix [[Float]] |
               QuantizedMatrix [V.Vector QuantizedBlock] deriving (Generic, NFData)
 
+unMatrix :: Matrix -> [[Float]]
+unMatrix (Matrix m) = m
+unMatrix (QuantizedMatrix _) = error "unMatrix not defined for QuantizedMatrix"
+
+
+
 height :: Matrix -> Int
 height (Matrix []) = 0
 height (Matrix m) = length $ head m
@@ -219,4 +227,9 @@ instance Format Matrix where
     where showLine v = (++ (if length v > formatWidth then " | ...." else "")) . ("    " ++) . intercalate " | " . map format . take formatWidth $ v
 --    where showLine v = (++ (if length v > formatWidth then " | ...." else "")) . ("    " ++) . intercalate " | " . map format $ v
   format m@QuantizedMatrix{} = "QuantizedMatrix [" ++ show (height m) ++ " x " ++ show (width m) ++ "]"
+
+instance Format [Matrix] where
+  --format x = "(" ++ format (sum (join $ map join $ transpose $ map unMatrix x)) ++ ") head = " ++ format (head x)
+  format x = "(" ++ format (sum (join $ map join $ map unMatrix x)) ++ ") head = " ++ format (head x)
+
 

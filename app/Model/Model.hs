@@ -16,6 +16,7 @@ import qualified Data.ByteString.Char8 as BC
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe
+import Data.Trie (Trie)
 import GHC.Generics
 
 import Format
@@ -73,7 +74,8 @@ data Model = Model {
   layers :: [Layer],
   norm :: Vector,
   output :: Matrix,
-  tokenEmbeddings :: Matrix
+  tokenEmbeddings :: Matrix,
+  tokenTrie :: Trie Int
   } deriving (Generic, NFData)
 
 data Layer =
@@ -99,7 +101,8 @@ rawModelToModel rawModel =
     norm = getModelVector rawModel "norm.weight",
     --output = Matrix [[]], --dummy value for deepseq
     output = getModelMatrix rawModel "output.weight",
-    tokenEmbeddings = getModelMatrix rawModel "tok_embeddings.weight"
+    tokenEmbeddings = getModelMatrix rawModel "tok_embeddings.weight",
+    tokenTrie = tokensToTokenTrie $ tokens' rawModel
   }
 
 getLayer :: RawModel -> Int -> Layer

@@ -10,6 +10,8 @@ import Control.Monad
 import Control.Monad.IO.Class
 import qualified Control.Monad.Trans.State as State
 import Data.Binary
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
 import Data.IORef
 import Data.List (sortOn, transpose)
@@ -17,6 +19,7 @@ import Data.List.Split
 import qualified Data.Vector.Storable as V
 import Foreign.Ptr
 import Numeric.Half
+import System.IO
 import System.IO.Unsafe
 
 import Converse
@@ -30,68 +33,78 @@ import Model.Tensor
 import Model.Token
 import Rope
 
-import Debug.Trace
+--import Debug.Trace
+
+--traceItem :: Format a => String -> a -> a
+--traceItem name item = trace (name ++ ": " ++ format item) item
 
 numberOfHeads :: Int
 numberOfHeads = 32
 
-traceItem :: Format a => String -> a -> a
-traceItem name item = trace (name ++ ": " ++ format item) item
+
+type OutcomeSpace = [(Int, Float)]
 
 main :: IO ()
 main = do
-  --let size = 48000000
-  --putStrLn $ format $ QuantizedMatrix [quantize $ take size [1..]] size 1 `matMul` Matrix [take size [1..]]
-  doit
-
-doit :: IO ()
-doit = do
   x <- BL.readFile "ggml-alpaca-7b-q4.bin"
   let rawModel = decode x
   let model :: Model
       model = rawModelToModel rawModel
 
   --putStrLn $ model `deepseq` "abcd"
-  
+  --putStrLn $ format rawModel
 
-  let theTrie = tokensToTokenTrie $ tokens model
+  _ <-
+    runConverse model $ forever $ do
+      input <- prompt "> "
+      _ <- addNewTokens " Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
+      outcomes <- addNewTokens $ BC.pack $ "### Instruction:\n\n" ++ input ++ "\n### Response:\n\n"
+      outcomes2 <- getAndPrintFullResponse outcomes
+      printTopTokens outcomes2
 
---  putStrLn $ format rawModel
-
---  let embd = [0,1,2,3]
-
-  let phraseChunks =
-        chunksOf 9 (1:tokenize theTrie " Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n")
-        ++ chunksOf 9 (1:tokenize theTrie "### Instruction:\n\n1+1\n### Response:\n\n")
-        ++ chunksOf 9 (tokenize theTrie "2")
-
-  runConverse $ do
-    results <- 
-      forM phraseChunks $ \phraseChunk -> do
-      tokensWithProbs <- handleNewTokens model $ phraseChunk
-      liftIO $ putStrLn $ "most probable next token: " ++ (show . format) (tokens model !! getNextToken tokensWithProbs)
-      return tokensWithProbs
-
-    liftIO $ printTopTokens model $ last results
-
-  putStrLn "done"
+  return ()
 
 
-getNextToken :: [(Int, Float)] -> Int
+prompt :: MonadIO m => String -> m String
+prompt thePrompt = do
+  liftIO $ putStr thePrompt
+  liftIO $ hFlush stdout
+  liftIO getLine
+
+getAndPrintFullResponse :: OutcomeSpace -> Converse OutcomeSpace
+getAndPrintFullResponse outcomes = do
+  let nextToken = getNextToken outcomes
+  if nextToken == 2
+    then do
+    liftIO $ putStrLn ""
+    return outcomes
+    else do
+    printToken nextToken
+    liftIO $ hFlush stdout
+    nextOutcomes <- handleNewTokens [nextToken]
+    getAndPrintFullResponse nextOutcomes --thank you sir, may I have another
+
+getNextToken :: OutcomeSpace -> Int
 getNextToken = fst . head --just take the most probable for now
 
-handleNewTokens :: Model -> [Int] -> Converse [(Int, Float)]
-handleNewTokens model phrase = do
-  (tokenHistory, historyKVs) <- State.get
+addNewTokens :: ByteString -> Converse OutcomeSpace
+addNewTokens phrase = do
+  (model, _, _) <- State.get
+  fmap last $
+    forM (chunksOf 9 (1:tokenize (tokenTrie model) phrase)) $ \phraseChunk -> do
+      handleNewTokens phraseChunk
+
+
+
+handleNewTokens :: [Int] -> Converse OutcomeSpace
+handleNewTokens phrase = do
+  (model, tokenHistory, historyKVs) <- State.get
   let position = length tokenHistory - 1
-  liftIO $ putStrLn $ "input phrase = " ++ show (map (format . (tokens model !!)) phrase)
   (Matrix output, extras) <- runNN model position historyKVs phrase
 
-  --putStrLn $ "output logits: " ++ format (last output)
+  let tokensWithProbs = logitsToTopProbabilities (tokenHistory ++ phrase) $ last output
 
-  let tokensWithProbs = logitsToTopProbabilities (tokenHistory ++ phrase) $ zip [0..] $ last output
-
-  State.put (tokenHistory ++ phrase, extras)
+  State.put (model, tokenHistory ++ phrase, extras)
   
   return tokensWithProbs
 
@@ -105,9 +118,10 @@ scale tokenHistoryLast (t, l) =
           (_, False) -> 10/1.3
   in l*scaleFactor
 
-logitsToTopProbabilities :: [Int] -> [(Int, Float)] -> [(Int, Float)]
-logitsToTopProbabilities tokenHistory tokens'= 
-  let tokensScaled = map (\(t, l) -> (t, scale tokenHistoryLast (t, l))) tokens'
+logitsToTopProbabilities :: [Int] -> [Float] -> OutcomeSpace
+logitsToTopProbabilities tokenHistory logits= 
+  let tokens' = zip [0..] logits
+      tokensScaled = map (\(t, l) -> (t, scale tokenHistoryLast (t, l))) tokens'
       sortedTokens = reverse $ sortOn snd tokensScaled
       topTokensScaled = take 40 sortedTokens
       tokenHistoryLast = --traceItem "tokenHistory"
@@ -119,10 +133,11 @@ logitsToTopProbabilities tokenHistory tokens'=
       probs = map (fmap (/nonNormalizedSum)) nonNormalizedProbs
   in probs
 
-printTopTokens :: Model -> [(Int, Float)] -> IO ()
-printTopTokens model tokensWithProbs =
+printTopTokens :: OutcomeSpace -> Converse ()
+printTopTokens tokensWithProbs = do
+  (model, _, _) <- State.get
   forM_ tokensWithProbs $ \(tokenInt, prob) ->
-    putStrLn $ format prob ++ ": (" ++ show tokenInt ++ ") " ++ show (format $ tokens model !! tokenInt)
+    liftIO $ putStrLn $ format prob ++ ": (" ++ show tokenInt ++ ") " ++ show (format $ tokens model !! tokenInt)
 
 --instance Format [Int] where
 --  format = show
@@ -181,10 +196,6 @@ processLayer layer startingPosition inputLayer extras =
       outputLayer = outputFF `matAdd` inputFF
   in (outputLayer, afterExtras)
   
-instance Format [Matrix] where
-  --format x = "(" ++ format (sum (join $ map join $ transpose $ map unMatrix x)) ++ ") head = " ++ format (head x)
-  format x = "(" ++ format (sum (join $ map join $ map unMatrix x)) ++ ") head = " ++ format (head x)
-
 selfAttention :: Layer -> Int -> Matrix -> HistoryKVs -> (Matrix, HistoryKVs)
 selfAttention Layer{..} startingPosition inputSA (extraKCur, extraVCur) =
   let
@@ -236,10 +247,6 @@ feedForward Layer{..} inpFF =
       cur5 = cur4 `simpleElementMul` tmp
       cur6 = feed_forward_w2 `matMul` cur5
   in cur6
-
-unMatrix :: Matrix -> [[Float]]
-unMatrix (Matrix m) = m
-unMatrix (QuantizedMatrix _) = error "unMatrix not defined for QuantizedMatrix"
 
 matrixRows :: Matrix -> [Vector]
 matrixRows (Matrix rows) = map Vector rows
