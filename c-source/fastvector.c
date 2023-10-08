@@ -44,8 +44,8 @@ float dot_Int4X32(char *x, char *y) {
 #include <stdint.h>
 
 float dot_Int4X32(char *x, char *y) {
-  const uint8_t * restrict p0 = x;
-  const uint8_t * restrict p1 = y;
+  const uint8_t * restrict p0 = (uint8_t *) x;
+  const uint8_t * restrict p1 = (uint8_t *) y;
 
   float sum = 0.0;
 
