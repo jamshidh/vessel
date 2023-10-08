@@ -1,5 +1,5 @@
 
-#import <Accelerate/Accelerate.h>
+#include <Accelerate/Accelerate.h>
 
 float dot_Int4X32(char *x, char *y) {
 
