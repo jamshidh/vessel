@@ -1,4 +1,8 @@
 
+//#define MAC
+
+#ifdef MAC
+
 #include <Accelerate/Accelerate.h>
 
 float dot_Int4X32(char *x, char *y) {
@@ -34,6 +38,24 @@ float dot_Int4X32(char *x, char *y) {
     return vaddvq_s32(p);
 
 }
+#else
+
+#include <stdio.h>
+#include <stdint.h>
+
+float dot_Int4X32(char *x, char *y) {
+  const uint8_t * restrict p0 = x;
+  const uint8_t * restrict p1 = y;
+
+  float sum = 0.0;
+
+  for(int i = 0; i < 16; i++)
+    sum += ((p0[i] & 0xf)-8) * ((p1[i] & 0xf)-8) + ((p0[i] >> 4)-8) * ((p1[i] >> 4)-8);
+  
+  return sum;
+}
+
+#endif
 
 
 void printBytes(char *name, char *val) {
