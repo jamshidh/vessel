@@ -47,7 +47,7 @@ foreign import ccall "dot_Int4X32" c_dot_Int4X32 :: Ptr Word8 -> Ptr Word8 -> Fl
 data Int4X32 = Int4X32 ByteString deriving (Show)
 
 instance Storable Int4X32 where
-  alignment = sizeOf
+  alignment _ = 1
   sizeOf _ = 16
   poke p (Int4X32 bytes) = do
     let bytes' = B.unpack bytes

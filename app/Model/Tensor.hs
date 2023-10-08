@@ -161,7 +161,7 @@ data QuantizedBlock = QuantizedBlock Float Int4X32 deriving (Show)
 
 instance Storable QuantizedBlock where
   sizeOf _ = 20
-  alignment = sizeOf
+  alignment _ = 1
   peek p = do
     f <- peek (castPtr p)
     nibbles <- peek (castPtr $ (castPtr p::Ptr Word8) `plusPtr` 4)
