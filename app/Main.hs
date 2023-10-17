@@ -144,7 +144,7 @@ printTopTokens tokensWithProbs = do
 
 runNN :: Model -> Int -> [HistoryKVs] -> [Int] -> Converse (Matrix, [HistoryKVs])
 runNN model startingPosition extras embd = do
-  let inputLayer = vectorsToMatrix $ map (getRow $ tokenEmbeddings model) embd
+  let inputLayer = Matrix $ map (getRow $ tokenEmbeddings model) embd
 
   value <- liftIO $ newIORef inputLayer
 
@@ -168,13 +168,12 @@ runNN model startingPosition extras embd = do
 
   return (output', allExtras)
 
-vectorsToMatrix :: [Vector] -> Matrix
-vectorsToMatrix vectors = Matrix [ v | Vector v <- vectors ]
-
-
 matrixVectors :: Matrix -> [Vector]
-matrixVectors (Matrix vectors) = map Vector vectors
-matrixVectors _ = error "trying to convert quantized Matrix to non quantized vectors"
+matrixVectors (Matrix vectors) = vectors
+matrixVectors _ = error "matrixVectors not defined for QuantizedMatrix"
+
+
+
 
 qMatrixVectors :: Matrix -> [QuantizedVector]
 qMatrixVectors (QuantizedMatrix matrixData) = map QuantizedVector matrixData
@@ -231,7 +230,7 @@ selfAttention Layer{..} startingPosition inputSA (extraKCur, extraVCur) =
       kqs_masked :: [Matrix]
       kqs_masked = map (filterUpperDiagonal startingPosition) kqs_scaled
       kqs_softmax :: [Matrix]
-      kqs_softmax = map (buildMatrixFromRows . map softMax . matrixRows) kqs_masked
+      kqs_softmax = map (Matrix . map softMax . matrixVectors) kqs_masked
       kqv :: [Matrix]
       kqv = zipWith matMul (map transposeMatrix vBlobs) kqs_softmax -- 32 times: [128 x 4] = [4 x 128] * [4 x 4]
       kqv_smashed = transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
@@ -250,15 +249,6 @@ feedForward Layer{..} inpFF =
       cur6 = feed_forward_w2 `matMul` cur5
   in cur6
 
-matrixRows :: Matrix -> [Vector]
-matrixRows (Matrix rows) = map Vector rows
-matrixRows (QuantizedMatrix _) = error "matrixRows not defined for QuantizedMatrix"
-
-
-buildMatrixFromRows :: [Vector] -> Matrix
-buildMatrixFromRows rows =
-  Matrix $ [row | Vector row <- rows]
-
 matrixConcat :: [Matrix] -> Matrix
 matrixConcat matrixList = Matrix $ concat $ map unMatrix matrixList
 
@@ -270,7 +260,7 @@ silu x =
   in realToFrac $ x_double/(1+exp (-x_double))
 
 replicateVector :: Vector -> Int -> Matrix
-replicateVector (Vector vals) i = Matrix $ replicate i vals
+replicateVector vals i = Matrix $ replicate i vals
 
 transposeMatrix :: Matrix -> Matrix
 transposeMatrix (Matrix m) = Matrix $ transpose m
@@ -290,7 +280,7 @@ exp' :: Float -> Float
 exp' = fromHalf . toHalf . exp . fromHalf . toHalf
 
 softMax :: Vector -> Vector
-softMax (Vector theRow) = Vector . normalize . map (exp' . (\v -> v - maximum theRow)) $ theRow
+softMax theRow = normalize . map (exp' . (\v -> v - maximum theRow)) $ theRow
 
 filterUpperDiagonal :: Int -> Matrix -> Matrix
 filterUpperDiagonal startingPosition (Matrix theMatrix) = Matrix $ map (\(theRow, i) -> filterAfter (startingPosition + i) theRow) $ zip theMatrix [1..]
@@ -350,9 +340,9 @@ slowDot :: [Float] -> [Float] -> Float
 slowDot x y = zipFold (\v1 v2 s -> fusionMultiplySumAllFloat v1 v2 s) (0.0::Float) x y
 
 dot :: Vector -> Vector -> Float
---dot x y | trace ("dot, length x = " ++ show (vectorLength x) ++ ", length y = " ++ show (vectorLength y)) False = undefined
-dot x y | vectorLength x /= vectorLength y = error $ "dot product lengths do not match: " ++ show (vectorLength x) ++ "/=" ++ show (vectorLength y)
-dot (Vector x) (Vector y) = realToFrac $ zipFold fusionMultiplySum (0.0::Double) x y
+--dot x y | trace ("dot, length x = " ++ show (length x) ++ ", length y = " ++ show (length y)) False = undefined
+dot x y | length x /= length y = error $ "dot product lengths do not match: " ++ show (length x) ++ "/=" ++ show (length y)
+dot x y = realToFrac $ zipFold fusionMultiplySum (0.0::Double) x y
   --sum $ zipWith (*) (map realToFrac x::[Double]) (map realToFrac y::[Double])
 
 
@@ -373,9 +363,6 @@ zipFold _ _ _ _ = error "mismatched array sizes in call to zipFold"
 
 foreign import ccall "fusionMultiplySum" fusionMultiplySum :: Float -> Float -> Double -> Double
 foreign import ccall "fusionMultiplySumAllFloat" fusionMultiplySumAllFloat :: Float -> Float -> Float -> Float
-
-vectorLength :: Vector -> Int
-vectorLength (Vector elems) = length elems
 
 foreign import ccall "vector_dot" vector_dot :: Int -> Ptr QuantizedBlock -> Ptr QuantizedBlock -> Float
 
