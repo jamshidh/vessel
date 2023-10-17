@@ -104,7 +104,7 @@ tensorToMatrix t@GenericTensor{fType=F32} =
 tensorToMatrix t@GenericTensor{fType=Q4_0} = 
   let --width' = dim_num_elems t !! 1
       height' = dim_num_elems t !! 0
-  in QuantizedMatrix (map splitIntoQuantizedBlocks $ byteStringChunksOf (fromIntegral height' * 20 `div` 32) $ elems t)
+  in QuantizedMatrix $ map QuantizedVector $ (map splitIntoQuantizedBlocks $ byteStringChunksOf (fromIntegral height' * 20 `div` 32) $ elems t)
 
 byteStringChunksOf :: Int -> ByteString -> [ByteString]
 byteStringChunksOf _ s | B.length s == 0 = []
@@ -152,7 +152,7 @@ bytesForRow Matrix{} _ = error "bytesForRow only implemented for Quantized matri
 
 getRow :: Matrix -> Int -> Vector
 --getRow m i | trace ("getRow: " ++ format m ++ " " ++ show i) False = undefined
-getRow (QuantizedMatrix matrixData) i = concat . map quantizedBlockToFloats . V.toList . (matrixData !!) $ i -- concat . map blockToFloats . splitIntoBlocks . bytesForRow m
+getRow (QuantizedMatrix matrixData) i = concat . map quantizedBlockToFloats . V.toList . (\(QuantizedVector v) -> v) . (matrixData !!) $ i -- concat . map blockToFloats . splitIntoBlocks . bytesForRow m
 getRow _ _ = error "getRow not definted for non-quantized Matrix"
 
 data QuantizedBlock = QuantizedBlock Float Int4X32 deriving (Show)
@@ -183,7 +183,7 @@ splitIntoQuantizedBlocks theData = V.fromList $ map parseQuantizedBlock $ splitI
 
 
 data Matrix = Matrix [Vector] |
-              QuantizedMatrix [V.Vector QuantizedBlock] deriving (Generic, NFData)
+              QuantizedMatrix [QuantizedVector] deriving (Generic, NFData)
 
 unMatrix :: Matrix -> [[Float]]
 unMatrix (Matrix m) = m
@@ -194,7 +194,7 @@ unMatrix (QuantizedMatrix _) = error "unMatrix not defined for QuantizedMatrix"
 height :: Matrix -> Int
 height (Matrix []) = 0
 height (Matrix m) = length $ head m
-height (QuantizedMatrix m) = 32 * V.length (head m)
+height (QuantizedMatrix m) = quantizedVectorLength $ head m
 
 width :: Matrix -> Int
 width (Matrix m) = length m
@@ -207,7 +207,7 @@ width (QuantizedMatrix m) = length m
 
 type Vector = [Float]
 
-data QuantizedVector = QuantizedVector (V.Vector QuantizedBlock) --deriving (Show, Generic, NFData)
+data QuantizedVector = QuantizedVector (V.Vector QuantizedBlock) deriving (Show, Generic, NFData)
 
 --instance Format Vector where
 --  format x = "[" ++ show (length x) ++ "]\n"
@@ -215,6 +215,9 @@ data QuantizedVector = QuantizedVector (V.Vector QuantizedBlock) --deriving (Sho
 
 instance Format QuantizedVector where                      
   format (QuantizedVector theData) = "QuantizedVector [" ++ show (V.length theData * 32) ++ "]"
+
+quantizedVectorLength :: QuantizedVector -> Int
+quantizedVectorLength (QuantizedVector x) = 32 * V.length x
 
 formatHeight :: Int
 formatHeight = 10

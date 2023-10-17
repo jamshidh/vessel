@@ -176,7 +176,7 @@ matrixVectors _ = error "matrixVectors not defined for QuantizedMatrix"
 
 
 qMatrixVectors :: Matrix -> [QuantizedVector]
-qMatrixVectors (QuantizedMatrix matrixData) = map QuantizedVector matrixData
+qMatrixVectors (QuantizedMatrix matrixData) = matrixData
 qMatrixVectors _ = error "trying to convert non quantized Matrix to quantized vectors"
 
 
@@ -384,9 +384,9 @@ quantized_vector_dot v1 v2 = unsafePerformIO $
   in f1 * f2 * ints1 `dot_Int4X32` ints2
 -}
 
-quantize :: [Float] -> V.Vector QuantizedBlock
+quantize :: Vector -> QuantizedVector
 --quantize x | trace ("quantizing: " ++ show (length x)) False = undefined
-quantize floats = V.fromList $ map quantize_single_block $ chunksOf 32 floats
+quantize floats = QuantizedVector $ V.fromList $ map quantize_single_block $ chunksOf 32 floats
 
 quantize_single_block :: [Float] -> QuantizedBlock
 quantize_single_block floats | length floats /= 32 = error $ "quantization blocks must have length 32, actually is " ++ show (length floats)
