@@ -169,15 +169,17 @@ runNN model startingPosition extras embd = do
   return (output', allExtras)
 
 vectorsToMatrix :: [Vector] -> Matrix
-vectorsToMatrix vectors = 
-  case ([ v | Vector v <- vectors ], [ v | QuantizedVector v <- vectors ]) of
-    (vectors', []) -> Matrix vectors'
-    ([], quantizedVectors) -> QuantizedMatrix quantizedVectors
-    _ -> error "error calling vectorsToMatrix: list of Vectors contains mixed quantized and non-quantized values."
+vectorsToMatrix vectors = Matrix [ v | Vector v <- vectors ]
+
 
 matrixVectors :: Matrix -> [Vector]
 matrixVectors (Matrix vectors) = map Vector vectors
-matrixVectors (QuantizedMatrix matrixData) = map QuantizedVector matrixData
+matrixVectors _ = error "trying to convert quantized Matrix to non quantized vectors"
+
+qMatrixVectors :: Matrix -> [QuantizedVector]
+qMatrixVectors (QuantizedMatrix matrixData) = map QuantizedVector matrixData
+qMatrixVectors _ = error "trying to convert non quantized Matrix to quantized vectors"
+
 
 {-
 applyPipeline :: [(a->a)] -> a -> a
@@ -269,7 +271,6 @@ silu x =
 
 replicateVector :: Vector -> Int -> Matrix
 replicateVector (Vector vals) i = Matrix $ replicate i vals
-replicateVector (QuantizedVector _) _ = error "replicateVector not defined for QuantizedVector"
 
 transposeMatrix :: Matrix -> Matrix
 transposeMatrix (Matrix m) = Matrix $ transpose m
@@ -290,7 +291,6 @@ exp' = fromHalf . toHalf . exp . fromHalf . toHalf
 
 softMax :: Vector -> Vector
 softMax (Vector theRow) = Vector . normalize . map (exp' . (\v -> v - maximum theRow)) $ theRow
-softMax (QuantizedVector _) = error "softMax not defined for QuantizedVector"
 
 filterUpperDiagonal :: Int -> Matrix -> Matrix
 filterUpperDiagonal startingPosition (Matrix theMatrix) = Matrix $ map (\(theRow, i) -> filterAfter (startingPosition + i) theRow) $ zip theMatrix [1..]
@@ -336,7 +336,7 @@ matMul x@(Matrix xVals) (Matrix yVals) | height x < width x =
 matMul x@(Matrix _) y@(Matrix _) =
   Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
 matMul x@(QuantizedMatrix _) y@(Matrix _) =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors $ quantizeMatrix y
+  Matrix $ map (\yRow -> map (\xCol -> xCol `qdot` yRow) $ qMatrixVectors x) $ qMatrixVectors $ quantizeMatrix y
 matMul _ _ = error "unsupported case called in matMul"
 
 quantizeMatrix :: Matrix -> Matrix
@@ -354,9 +354,15 @@ dot :: Vector -> Vector -> Float
 dot x y | vectorLength x /= vectorLength y = error $ "dot product lengths do not match: " ++ show (vectorLength x) ++ "/=" ++ show (vectorLength y)
 dot (Vector x) (Vector y) = realToFrac $ zipFold fusionMultiplySum (0.0::Double) x y
   --sum $ zipWith (*) (map realToFrac x::[Double]) (map realToFrac y::[Double])
-dot (QuantizedVector x) (Vector y) = x `quantized_vector_dot` quantize y
-dot (QuantizedVector x) (QuantizedVector y) = x `quantized_vector_dot` y
-dot (Vector x) (QuantizedVector y) = quantize x `quantized_vector_dot` y
+
+
+
+qdot :: QuantizedVector -> QuantizedVector -> Float
+qdot (QuantizedVector x) (QuantizedVector y) = x `quantized_vector_dot` y
+
+
+
+
 
 zipFold :: (a -> b -> c -> c) -> c -> [a] -> [b] -> c
 zipFold _ initVal [] [] = initVal
@@ -370,7 +376,6 @@ foreign import ccall "fusionMultiplySumAllFloat" fusionMultiplySumAllFloat :: Fl
 
 vectorLength :: Vector -> Int
 vectorLength (Vector elems) = length elems
-vectorLength (QuantizedVector elems) = V.length elems * 32
 
 foreign import ccall "vector_dot" vector_dot :: Int -> Ptr QuantizedBlock -> Ptr QuantizedBlock -> Float
 

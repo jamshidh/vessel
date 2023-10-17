@@ -7,6 +7,7 @@ module Model.Tensor (
   GenericTensor(..),
   QuantizedBlock(..),
   Matrix(..),
+  QuantizedVector(..),
   Vector(..),
   unMatrix,
   width,
@@ -117,7 +118,14 @@ tensorToVector :: GenericTensor -> Vector
 tensorToVector GenericTensor{..} | length dim_num_elems /= 1 = error "You can't convert a matrix to a vector"
 tensorToVector t@GenericTensor{fType=F32} = -- TODO check size matches
   Vector $ V.toList $ bytesToFloats $ elems t
-tensorToVector t@GenericTensor{fType=Q4_0} = QuantizedVector $ splitIntoQuantizedBlocks $ elems t -- $ getRow t 0
+tensorToVector _ = error "you can't convert a quantized tensor to a non quantized vector"
+
+
+
+tensorToQuantizedVector :: GenericTensor -> QuantizedVector
+tensorToQuantizedVector GenericTensor{..} | length dim_num_elems /= 1 = error "You can't convert a matrix to a vector"
+tensorToQuantizedVector t@GenericTensor{fType=Q4_0} = QuantizedVector $ splitIntoQuantizedBlocks $ elems t -- $ getRow t 0
+tensorToQuantizedVector _ = error "you can't convert a non quantized tensor to a quantized vector"
 
 --tensorToVector = Vector . tensorToFloatList 
 
@@ -205,11 +213,15 @@ width (QuantizedMatrix m) = length m
 
 
 
-data Vector = Vector [Float] | QuantizedVector (V.Vector QuantizedBlock) deriving (Show, Generic, NFData)
+data Vector = Vector [Float] deriving (Show, Generic, NFData)
+
+data QuantizedVector = QuantizedVector (V.Vector QuantizedBlock) --deriving (Show, Generic, NFData)
 
 instance Format Vector where
   format (Vector x) = "[" ++ show (length x) ++ "]\n"
                       ++ show (take 10 x)
+
+instance Format QuantizedVector where                      
   format (QuantizedVector theData) = "QuantizedVector [" ++ show (V.length theData * 32) ++ "]"
 
 formatHeight :: Int
