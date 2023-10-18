@@ -9,8 +9,8 @@ module Converse (
 import Control.Monad.IO.Class
 import Control.Monad.Trans.State
 
+import Model.Matrix
 import Model.Model
-import Model.Tensor
 
 import Format
 

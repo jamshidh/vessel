@@ -28,9 +28,11 @@ import Format
 
 import Model.Float ()
 import Model.Int4X32
+import Model.Matrix
 import Model.Model
 import Model.Tensor
 import Model.Token
+import Model.Vector
 import Rope
 
 --import Debug.Trace
