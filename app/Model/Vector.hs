@@ -12,7 +12,8 @@ module Model.Vector (
   quantizedVectorLength,
   quantize,
   dequantize,
-  unpackedQuantizedVectorToByteString
+  unpackedQuantizedVectorToByteString,
+  byteStringToQuantizedVector
   ) where
 
 import Control.DeepSeq
@@ -101,3 +102,22 @@ unpackedQuantizedVectorToByteString v =
     unsafePerformIO $
     withForeignPtr p $ \p' -> 
                          B.packCStringLen (castPtr p', l * sizeOf (undefined :: QuantizedBlock))
+
+byteStringToQuantizedVector :: ByteString -> QuantizedVector
+byteStringToQuantizedVector = QuantizedVector . byteStringToUnpackedQuantizedBlocks
+
+byteStringToUnpackedQuantizedBlocks :: ByteString -> UnpackedQuantizedVector
+byteStringToUnpackedQuantizedBlocks theData = V.fromList $ map parseQuantizedBlock $ splitIntoBlocks theData
+  where
+    parseQuantizedBlock :: ByteString -> QuantizedBlock
+    parseQuantizedBlock theBlock = 
+      let (dBytes, bytes) = B.splitAt 4 theBlock
+          d = bytesToFloats dBytes
+          theNibbles = byteStringToInt4X32 bytes
+      in QuantizedBlock (V.head d) theNibbles
+    splitIntoBlocks :: ByteString -> [ByteString]
+    splitIntoBlocks x | B.length x == 0 = []
+    splitIntoBlocks x = first:splitIntoBlocks rest
+      where (first, rest) = B.splitAt 20 x
+
+

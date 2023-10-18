@@ -20,7 +20,6 @@ import qualified Data.Vector.Storable as V
 import GHC.Generics
 
 import Model.Float ()
-import Model.Int4X32
 import Model.GenericTensor
 import Model.Vector
 
@@ -79,26 +78,6 @@ tensorToMatrix t@GenericTensor{fType=Q4_0} =
       height' = dim_num_elems t !! 0
   in QuantizedMatrix $ map byteStringToQuantizedVector $ byteStringChunksOf (fromIntegral height' * 20 `div` 32) $ elems t
 
-
-byteStringToQuantizedVector :: ByteString -> QuantizedVector
-byteStringToQuantizedVector = QuantizedVector . splitIntoQuantizedBlocks
-
-
-
-splitIntoQuantizedBlocks :: ByteString -> (V.Vector QuantizedBlock)
-splitIntoQuantizedBlocks theData = V.fromList $ map parseQuantizedBlock $ splitIntoBlocks theData
-  where
-    parseQuantizedBlock :: ByteString -> QuantizedBlock
-    parseQuantizedBlock theBlock = 
-      let (dBytes, bytes) = B.splitAt 4 theBlock
-          d = bytesToFloats dBytes
-          theNibbles = byteStringToInt4X32 bytes
-      in QuantizedBlock (V.head d) theNibbles
-
-splitIntoBlocks :: ByteString -> [ByteString]
-splitIntoBlocks x | B.length x == 0 = []
-splitIntoBlocks x = first:splitIntoBlocks rest
-  where (first, rest) = B.splitAt 20 x
 
 byteStringChunksOf :: Int -> ByteString -> [ByteString]
 byteStringChunksOf _ s | B.length s == 0 = []
