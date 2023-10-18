@@ -7,7 +7,8 @@ module Model.Matrix (
   width,
   height,
   unMatrix,
-  tensorToMatrix
+  tensorToMatrix,
+  quantizeMatrix
   ) where
 
 import Control.DeepSeq
@@ -76,7 +77,13 @@ tensorToMatrix t@GenericTensor{fType=F32} =
 tensorToMatrix t@GenericTensor{fType=Q4_0} = 
   let --width' = dim_num_elems t !! 1
       height' = dim_num_elems t !! 0
-  in QuantizedMatrix $ map QuantizedVector $ (map splitIntoQuantizedBlocks $ byteStringChunksOf (fromIntegral height' * 20 `div` 32) $ elems t)
+  in QuantizedMatrix $ map byteStringToQuantizedVector $ byteStringChunksOf (fromIntegral height' * 20 `div` 32) $ elems t
+
+
+byteStringToQuantizedVector :: ByteString -> QuantizedVector
+byteStringToQuantizedVector = QuantizedVector . splitIntoQuantizedBlocks
+
+
 
 splitIntoQuantizedBlocks :: ByteString -> (V.Vector QuantizedBlock)
 splitIntoQuantizedBlocks theData = V.fromList $ map parseQuantizedBlock $ splitIntoBlocks theData
@@ -98,6 +105,10 @@ byteStringChunksOf _ s | B.length s == 0 = []
 byteStringChunksOf i s | B.length s < i = error $ "string length not a multiple of i: remainder = " ++ show (B.length s)
 byteStringChunksOf i s = first:byteStringChunksOf i rest
   where (first, rest) = B.splitAt i s
+
+quantizeMatrix :: Matrix -> Matrix
+quantizeMatrix (Matrix vectors) = QuantizedMatrix (map quantize vectors)
+quantizeMatrix _ = error "unsupported case in quantizeMatrix"
 
 
 

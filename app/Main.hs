@@ -11,13 +11,14 @@ import Control.Monad.IO.Class
 import qualified Control.Monad.Trans.State as State
 import Data.Binary
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
 import Data.IORef
 import Data.List (sortOn, transpose)
 import Data.List.Split
 import qualified Data.Vector.Storable as V
-import Foreign.Ptr
+import Foreign.C.String
 import Numeric.Half
 import System.IO
 import System.IO.Unsafe
@@ -27,7 +28,6 @@ import Converse
 import Format
 
 import Model.Float ()
-import Model.Int4X32
 import Model.Matrix
 import Model.Model
 import Model.Tensor
@@ -331,10 +331,6 @@ matMul x@(QuantizedMatrix _) y@(Matrix _) =
   Matrix $ map (\yRow -> map (\xCol -> xCol `qdot` yRow) $ qMatrixVectors x) $ qMatrixVectors $ quantizeMatrix y
 matMul _ _ = error "unsupported case called in matMul"
 
-quantizeMatrix :: Matrix -> Matrix
-quantizeMatrix (Matrix vectors) = QuantizedMatrix (map quantize vectors)
-quantizeMatrix _ = error "unsupported case in quantizeMatrix"
-
 slowDot :: [Float] -> [Float] -> Float
 --slowDot x y = realToFrac $ sum $ zipWith (*) (map realToFrac x) (map realToFrac y :: [Double])
 --slowDot x y = sum $ zipWith (*) x y
@@ -366,16 +362,18 @@ zipFold _ _ _ _ = error "mismatched array sizes in call to zipFold"
 foreign import ccall "fusionMultiplySum" fusionMultiplySum :: Float -> Float -> Double -> Double
 foreign import ccall "fusionMultiplySumAllFloat" fusionMultiplySumAllFloat :: Float -> Float -> Float -> Float
 
-foreign import ccall "vector_dot" vector_dot :: Int -> Ptr QuantizedBlock -> Ptr QuantizedBlock -> Float
+foreign import ccall "vector_dot" vector_dot :: Int -> CString -> CString -> Float
 
-quantized_vector_dot :: V.Vector QuantizedBlock -> V.Vector QuantizedBlock -> Float
+quantized_vector_dot :: UnpackedQuantizedVector -> UnpackedQuantizedVector -> Float
 --quantized_block_dot (QuantizedBlock f1 n1) (QuantizedBlock f2 n2) | trace ("f1 = " ++ format f1 ++ ", f2 = " ++ format f2 ++ ", n1 = " ++ show n1 ++ ", n2 = " ++ show n2 ++ ", int dot = " ++ show (sum $ zipWith (*) n1 n2)) False = undefined
 quantized_vector_dot v1 v2 | V.length v1 /= V.length v2 = error "vector lengths different in call to quantized_vector_dot"
-quantized_vector_dot v1 v2 = unsafePerformIO $
-  V.unsafeWith v1 $ \p1 ->
-  V.unsafeWith v2 $ \p2 ->
+quantized_vector_dot v1 v2 =
+  let bytes1 = unpackedQuantizedVectorToByteString v1
+      bytes2 = unpackedQuantizedVectorToByteString v2
+  in unsafePerformIO $
+  B.useAsCStringLen bytes1 $ \(p1, _) ->
+  B.useAsCStringLen bytes2 $ \(p2, _) ->
                       return $ vector_dot (V.length v1) p1 p2
-
 
 
 {-
@@ -385,18 +383,6 @@ quantized_vector_dot v1 v2 = unsafePerformIO $
       f2 = V.unsafeCast $ castPtr p2 :: Float
   in f1 * f2 * ints1 `dot_Int4X32` ints2
 -}
-
-quantize :: Vector -> QuantizedVector
---quantize x | trace ("quantizing: " ++ show (length x)) False = undefined
-quantize floats = QuantizedVector $ V.fromList $ map quantize_single_block $ chunksOf 32 floats
-
-quantize_single_block :: [Float] -> QuantizedBlock
-quantize_single_block floats | length floats /= 32 = error $ "quantization blocks must have length 32, actually is " ++ show (length floats)
-quantize_single_block floats =
-  QuantizedBlock d $ packInt4X32 nibbles
-  where d = maximum (map abs floats)/7
-        inverse_d = 1/d
-        nibbles = map ((\v -> v-8) . truncate . (8.5+) . (inverse_d *)) floats
 
 meanNorm :: Matrix -> Matrix
 meanNorm m@(Matrix theFloats) = 
