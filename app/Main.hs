@@ -16,21 +16,18 @@ import qualified Data.ByteString.Lazy as BL
 import Data.IORef
 import Data.List (sortOn, transpose)
 import Data.List.Split
-import qualified Data.Vector.Storable as V
-import Foreign.Ptr
 import Numeric.Half
 import System.IO
-import System.IO.Unsafe
 
 import Converse
 
 import Format
 
 import Model.Float ()
-import Model.Int4X32
+import Model.Matrix
 import Model.Model
-import Model.Tensor
 import Model.Token
+import Model.Vector
 import Rope
 
 --import Debug.Trace
@@ -144,7 +141,7 @@ printTopTokens tokensWithProbs = do
 
 runNN :: Model -> Int -> [HistoryKVs] -> [Int] -> Converse (Matrix, [HistoryKVs])
 runNN model startingPosition extras embd = do
-  let inputLayer = vectorsToMatrix $ map (getRow $ tokenEmbeddings model) embd
+  let inputLayer = Matrix $ map (getRow $ tokenEmbeddings model) embd
 
   value <- liftIO $ newIORef inputLayer
 
@@ -168,16 +165,6 @@ runNN model startingPosition extras embd = do
 
   return (output', allExtras)
 
-vectorsToMatrix :: [Vector] -> Matrix
-vectorsToMatrix vectors = 
-  case ([ v | Vector v <- vectors ], [ v | QuantizedVector v <- vectors ]) of
-    (vectors', []) -> Matrix vectors'
-    ([], quantizedVectors) -> QuantizedMatrix quantizedVectors
-    _ -> error "error calling vectorsToMatrix: list of Vectors contains mixed quantized and non-quantized values."
-
-matrixVectors :: Matrix -> [Vector]
-matrixVectors (Matrix vectors) = map Vector vectors
-matrixVectors (QuantizedMatrix matrixData) = map QuantizedVector matrixData
 
 {-
 applyPipeline :: [(a->a)] -> a -> a
@@ -204,16 +191,16 @@ selfAttention Layer{..} startingPosition inputSA (extraKCur, extraVCur) =
       vCur = attention_wv `matMul` inputSA
       headSize = height kCur `div` numberOfHeads
       kBlobs' :: [Matrix]
-      kBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ unMatrix kCur
+      kBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ matrixVectors kCur
       kBlobs'' :: [Matrix]
       kBlobs'' = zipWith (\x y -> (matrixConcat [x, y])) extraKCur kBlobs'
 --               (\(first:rest) -> (matrixConcat [traceItem "extraKCur" extraKCur, first]):rest) kBlobs'
       kBlobs :: [Matrix]
-      kBlobs = map (Matrix . embedPositions 0 . unMatrix) kBlobs''
+      kBlobs = map (Matrix . embedPositions 0 . matrixVectors) kBlobs''
       qBlobs :: [Matrix]
-      qBlobs = map (Matrix . embedPositions startingPosition) $ transpose $ map (chunksOf headSize) $ unMatrix qCur
+      qBlobs = map (Matrix . embedPositions startingPosition) $ transpose $ map (chunksOf headSize) $ matrixVectors qCur
       vBlobs' :: [Matrix]
-      vBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ unMatrix vCur
+      vBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ matrixVectors vCur
       vBlobs :: [Matrix]
       vBlobs = zipWith (\x y -> (matrixConcat [x, y])) extraVCur vBlobs'
 --               (\(first:rest) -> (matrixConcat [traceItem "extraVCur" extraVCur, first]):rest) vBlobs'
@@ -229,7 +216,7 @@ selfAttention Layer{..} startingPosition inputSA (extraKCur, extraVCur) =
       kqs_masked :: [Matrix]
       kqs_masked = map (filterUpperDiagonal startingPosition) kqs_scaled
       kqs_softmax :: [Matrix]
-      kqs_softmax = map (buildMatrixFromRows . map softMax . matrixRows) kqs_masked
+      kqs_softmax = map (Matrix . map softMax . matrixVectors) kqs_masked
       kqv :: [Matrix]
       kqv = zipWith matMul (map transposeMatrix vBlobs) kqs_softmax -- 32 times: [128 x 4] = [4 x 128] * [4 x 4]
       kqv_smashed = transposeMatrix (matrixConcat (map transposeMatrix kqv)) -- [??] = [4 x 4096] * [4096 x 4]
@@ -248,17 +235,8 @@ feedForward Layer{..} inpFF =
       cur6 = feed_forward_w2 `matMul` cur5
   in cur6
 
-matrixRows :: Matrix -> [Vector]
-matrixRows (Matrix rows) = map Vector rows
-matrixRows (QuantizedMatrix _) = error "matrixRows not defined for QuantizedMatrix"
-
-
-buildMatrixFromRows :: [Vector] -> Matrix
-buildMatrixFromRows rows =
-  Matrix $ [row | Vector row <- rows]
-
 matrixConcat :: [Matrix] -> Matrix
-matrixConcat matrixList = Matrix $ concat $ map unMatrix matrixList
+matrixConcat matrixList = Matrix $ concat $ map matrixVectors matrixList
 
 
 silu :: Float -> Float
@@ -268,8 +246,7 @@ silu x =
   in realToFrac $ x_double/(1+exp (-x_double))
 
 replicateVector :: Vector -> Int -> Matrix
-replicateVector (Vector vals) i = Matrix $ replicate i vals
-replicateVector (QuantizedVector _) _ = error "replicateVector not defined for QuantizedVector"
+replicateVector vals i = Matrix $ replicate i vals
 
 transposeMatrix :: Matrix -> Matrix
 transposeMatrix (Matrix m) = Matrix $ transpose m
@@ -281,16 +258,11 @@ simpleElementMul (Matrix x) (Matrix y) = Matrix $ zipWith (zipWith (*)) x y
 simpleElementMul _ _ = error "simpleElementMul not defined for QuantizedMatrix"
 
 
-matrixMap :: (Float -> Float) -> Matrix -> Matrix
-matrixMap f (Matrix m) = Matrix $ map (map f) m
-matrixMap _ (QuantizedMatrix _) = error "matrixMap not defined for QuantizedMatrix"
-
 exp' :: Float -> Float
 exp' = fromHalf . toHalf . exp . fromHalf . toHalf
 
 softMax :: Vector -> Vector
-softMax (Vector theRow) = Vector . normalize . map (exp' . (\v -> v - maximum theRow)) $ theRow
-softMax (QuantizedVector _) = error "softMax not defined for QuantizedVector"
+softMax theRow = normalize . map (exp' . (\v -> v - maximum theRow)) $ theRow
 
 filterUpperDiagonal :: Int -> Matrix -> Matrix
 filterUpperDiagonal startingPosition (Matrix theMatrix) = Matrix $ map (\(theRow, i) -> filterAfter (startingPosition + i) theRow) $ zip theMatrix [1..]
@@ -324,85 +296,6 @@ formatShortMatrix m =
   )
   ++ "[" ++ show (height m) ++ "x" ++ show (width m) ++ "]"
 -}
-
-matMul :: Matrix -> Matrix -> Matrix
---matMul x y | trace ("multiplying: " ++ formatShortMatrix x ++ " * " ++ formatShortMatrix y ++ ", num ops = " ++ show (height x * width x * width y) ++ ", num vec ops = " ++ show (width x * width y)) False = undefined
-matMul x y | height x /= height y = error $ "matrix heights don't match:\n" ++
-             "x size is: [" ++ show (height x) ++ " x " ++ show (width x) ++ "]\n" ++
-             "y size is: [" ++ show (height y) ++ " x " ++ show (width y) ++ "]\n" ++
-             show (height x) ++ " /= " ++ show (height y)
-matMul x@(Matrix xVals) (Matrix yVals) | height x < width x =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `slowDot` yRow) xVals) yVals
-matMul x@(Matrix _) y@(Matrix _) =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
-matMul x@(QuantizedMatrix _) y@(Matrix _) =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors $ quantizeMatrix y
-matMul _ _ = error "unsupported case called in matMul"
-
-quantizeMatrix :: Matrix -> Matrix
-quantizeMatrix (Matrix vectors) = QuantizedMatrix (map quantize vectors)
-quantizeMatrix _ = error "unsupported case in quantizeMatrix"
-
-slowDot :: [Float] -> [Float] -> Float
---slowDot x y = realToFrac $ sum $ zipWith (*) (map realToFrac x) (map realToFrac y :: [Double])
---slowDot x y = sum $ zipWith (*) x y
-
-slowDot x y = zipFold (\v1 v2 s -> fusionMultiplySumAllFloat v1 v2 s) (0.0::Float) x y
-
-dot :: Vector -> Vector -> Float
---dot x y | trace ("dot, length x = " ++ show (vectorLength x) ++ ", length y = " ++ show (vectorLength y)) False = undefined
-dot x y | vectorLength x /= vectorLength y = error $ "dot product lengths do not match: " ++ show (vectorLength x) ++ "/=" ++ show (vectorLength y)
-dot (Vector x) (Vector y) = realToFrac $ zipFold fusionMultiplySum (0.0::Double) x y
-  --sum $ zipWith (*) (map realToFrac x::[Double]) (map realToFrac y::[Double])
-dot (QuantizedVector x) (Vector y) = x `quantized_vector_dot` quantize y
-dot (QuantizedVector x) (QuantizedVector y) = x `quantized_vector_dot` y
-dot (Vector x) (QuantizedVector y) = quantize x `quantized_vector_dot` y
-
-zipFold :: (a -> b -> c -> c) -> c -> [a] -> [b] -> c
-zipFold _ initVal [] [] = initVal
-zipFold f initVal (firstx:restx) (firsty:resty) =
-  let newVal = f firstx firsty initVal
-  in zipFold f newVal restx resty
-zipFold _ _ _ _ = error "mismatched array sizes in call to zipFold"
-
-foreign import ccall "fusionMultiplySum" fusionMultiplySum :: Float -> Float -> Double -> Double
-foreign import ccall "fusionMultiplySumAllFloat" fusionMultiplySumAllFloat :: Float -> Float -> Float -> Float
-
-vectorLength :: Vector -> Int
-vectorLength (Vector elems) = length elems
-vectorLength (QuantizedVector elems) = V.length elems * 32
-
-foreign import ccall "vector_dot" vector_dot :: Int -> Ptr QuantizedBlock -> Ptr QuantizedBlock -> Float
-
-quantized_vector_dot :: V.Vector QuantizedBlock -> V.Vector QuantizedBlock -> Float
---quantized_block_dot (QuantizedBlock f1 n1) (QuantizedBlock f2 n2) | trace ("f1 = " ++ format f1 ++ ", f2 = " ++ format f2 ++ ", n1 = " ++ show n1 ++ ", n2 = " ++ show n2 ++ ", int dot = " ++ show (sum $ zipWith (*) n1 n2)) False = undefined
-quantized_vector_dot v1 v2 | V.length v1 /= V.length v2 = error "vector lengths different in call to quantized_vector_dot"
-quantized_vector_dot v1 v2 = unsafePerformIO $
-  V.unsafeWith v1 $ \p1 ->
-  V.unsafeWith v2 $ \p2 ->
-                      return $ vector_dot (V.length v1) p1 p2
-
-
-
-{-
---quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) = --traceItem "quantized_block_dot" $ 
---  f1 * f2 * (fromIntegral $ sum $ zipWith (*) ints1 ints2)
-  let f1 = V.unsafeCast $ castPtr p1 :: Float
-      f2 = V.unsafeCast $ castPtr p2 :: Float
-  in f1 * f2 * ints1 `dot_Int4X32` ints2
--}
-
-quantize :: [Float] -> V.Vector QuantizedBlock
---quantize x | trace ("quantizing: " ++ show (length x)) False = undefined
-quantize floats = V.fromList $ map quantize_single_block $ chunksOf 32 floats
-
-quantize_single_block :: [Float] -> QuantizedBlock
-quantize_single_block floats | length floats /= 32 = error $ "quantization blocks must have length 32, actually is " ++ show (length floats)
-quantize_single_block floats =
-  QuantizedBlock d $ packInt4X32 nibbles
-  where d = maximum (map abs floats)/7
-        inverse_d = 1/d
-        nibbles = map ((\v -> v-8) . truncate . (8.5+) . (inverse_d *)) floats
 
 meanNorm :: Matrix -> Matrix
 meanNorm m@(Matrix theFloats) = 

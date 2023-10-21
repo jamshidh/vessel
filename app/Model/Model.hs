@@ -21,9 +21,11 @@ import GHC.Generics
 
 import Format
 
+import Model.GenericTensor
 import Model.Int
-import Model.Tensor
+import Model.Matrix
 import Model.Token
+import Model.Vector
 
 
 data RawModel =
