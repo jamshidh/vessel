@@ -166,17 +166,6 @@ runNN model startingPosition extras embd = do
 
   return (output', allExtras)
 
-matrixVectors :: Matrix -> [Vector]
-matrixVectors (Matrix vectors) = vectors
-matrixVectors _ = error "matrixVectors not defined for QuantizedMatrix"
-
-
-
-
-qMatrixVectors :: Matrix -> [QuantizedVector]
-qMatrixVectors (QuantizedMatrix matrixData) = matrixData
-qMatrixVectors _ = error "trying to convert non quantized Matrix to quantized vectors"
-
 
 {-
 applyPipeline :: [(a->a)] -> a -> a
@@ -203,16 +192,16 @@ selfAttention Layer{..} startingPosition inputSA (extraKCur, extraVCur) =
       vCur = attention_wv `matMul` inputSA
       headSize = height kCur `div` numberOfHeads
       kBlobs' :: [Matrix]
-      kBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ unMatrix kCur
+      kBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ matrixVectors kCur
       kBlobs'' :: [Matrix]
       kBlobs'' = zipWith (\x y -> (matrixConcat [x, y])) extraKCur kBlobs'
 --               (\(first:rest) -> (matrixConcat [traceItem "extraKCur" extraKCur, first]):rest) kBlobs'
       kBlobs :: [Matrix]
-      kBlobs = map (Matrix . embedPositions 0 . unMatrix) kBlobs''
+      kBlobs = map (Matrix . embedPositions 0 . matrixVectors) kBlobs''
       qBlobs :: [Matrix]
-      qBlobs = map (Matrix . embedPositions startingPosition) $ transpose $ map (chunksOf headSize) $ unMatrix qCur
+      qBlobs = map (Matrix . embedPositions startingPosition) $ transpose $ map (chunksOf headSize) $ matrixVectors qCur
       vBlobs' :: [Matrix]
-      vBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ unMatrix vCur
+      vBlobs' = map Matrix $ transpose $ map (chunksOf headSize) $ matrixVectors vCur
       vBlobs :: [Matrix]
       vBlobs = zipWith (\x y -> (matrixConcat [x, y])) extraVCur vBlobs'
 --               (\(first:rest) -> (matrixConcat [traceItem "extraVCur" extraVCur, first]):rest) vBlobs'
@@ -248,7 +237,7 @@ feedForward Layer{..} inpFF =
   in cur6
 
 matrixConcat :: [Matrix] -> Matrix
-matrixConcat matrixList = Matrix $ concat $ map unMatrix matrixList
+matrixConcat matrixList = Matrix $ concat $ map matrixVectors matrixList
 
 
 silu :: Float -> Float
@@ -269,10 +258,6 @@ simpleElementMul x y | (height x /= height y) || (width x /= width y) = error "m
 simpleElementMul (Matrix x) (Matrix y) = Matrix $ zipWith (zipWith (*)) x y
 simpleElementMul _ _ = error "simpleElementMul not defined for QuantizedMatrix"
 
-
-matrixMap :: (Float -> Float) -> Matrix -> Matrix
-matrixMap f (Matrix m) = Matrix $ map (map f) m
-matrixMap _ (QuantizedMatrix _) = error "matrixMap not defined for QuantizedMatrix"
 
 exp' :: Float -> Float
 exp' = fromHalf . toHalf . exp . fromHalf . toHalf
@@ -311,28 +296,6 @@ formatShortMatrix m =
       (QuantizedMatrix _ _ _) -> "Q"
   )
   ++ "[" ++ show (height m) ++ "x" ++ show (width m) ++ "]"
--}
-
-matMul :: Matrix -> Matrix -> Matrix
---matMul x y | trace ("multiplying: " ++ formatShortMatrix x ++ " * " ++ formatShortMatrix y ++ ", num ops = " ++ show (height x * width x * width y) ++ ", num vec ops = " ++ show (width x * width y)) False = undefined
-matMul x y | height x /= height y = error $ "matrix heights don't match:\n" ++
-             "x size is: [" ++ show (height x) ++ " x " ++ show (width x) ++ "]\n" ++
-             "y size is: [" ++ show (height y) ++ " x " ++ show (width y) ++ "]\n" ++
-             show (height x) ++ " /= " ++ show (height y)
-matMul x@(Matrix xVals) (Matrix yVals) | height x < width x =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `slowDot` yRow) xVals) yVals
-matMul x@(Matrix _) y@(Matrix _) =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
-matMul x@(QuantizedMatrix _) y@(Matrix _) =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `quantized_vector_dot` yRow) $ qMatrixVectors x) $ qMatrixVectors $ quantizeMatrix y
-matMul _ _ = error "unsupported case called in matMul"
-
-{-
---quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) = --traceItem "quantized_block_dot" $ 
---  f1 * f2 * (fromIntegral $ sum $ zipWith (*) ints1 ints2)
-  let f1 = V.unsafeCast $ castPtr p1 :: Float
-      f2 = V.unsafeCast $ castPtr p2 :: Float
-  in f1 * f2 * ints1 `dot_Int4X32` ints2
 -}
 
 meanNorm :: Matrix -> Matrix

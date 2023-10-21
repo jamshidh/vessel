@@ -4,11 +4,13 @@
 
 module Model.Matrix (
   Matrix(..),
+  matrixVectors,
+  matrixMap,
   width,
   height,
-  unMatrix,
   tensorToMatrix,
-  quantizeMatrix
+  quantizeMatrix,
+  matMul
   ) where
 
 import Control.DeepSeq
@@ -29,9 +31,21 @@ import Format
 data Matrix = Matrix [Vector] |
               QuantizedMatrix [QuantizedVector] deriving (Generic, NFData)
 
-unMatrix :: Matrix -> [[Float]]
-unMatrix (Matrix m) = m
-unMatrix (QuantizedMatrix _) = error "unMatrix not defined for QuantizedMatrix"
+--unMatrix :: Matrix -> [[Float]]
+--unMatrix (Matrix m) = m
+--unMatrix (QuantizedMatrix _) = error "unMatrix not defined for QuantizedMatrix"
+
+matrixVectors :: Matrix -> [Vector]
+matrixVectors (Matrix vectors) = vectors
+matrixVectors _ = error "matrixVectors not defined for QuantizedMatrix"
+
+qMatrixVectors :: Matrix -> [QuantizedVector]
+qMatrixVectors (QuantizedMatrix matrixData) = matrixData
+qMatrixVectors _ = error "trying to convert non quantized Matrix to quantized vectors"
+
+matrixMap :: (Float -> Float) -> Matrix -> Matrix
+matrixMap f (Matrix m) = Matrix $ map (map f) m
+matrixMap _ (QuantizedMatrix _) = error "matrixMap not defined for QuantizedMatrix"
 
 height :: Matrix -> Int
 height (Matrix []) = 0
@@ -64,7 +78,7 @@ instance Format Matrix where
 
 instance Format [Matrix] where
   --format x = "(" ++ format (sum (join $ map join $ transpose $ map unMatrix x)) ++ ") head = " ++ format (head x)
-  format x = "(" ++ format (sum (join $ map join $ map unMatrix x)) ++ ") head = " ++ format (head x)
+  format x = "(" ++ format (sum (join $ map join $ map matrixVectors x)) ++ ") head = " ++ format (head x)
 
 
 
@@ -89,9 +103,16 @@ quantizeMatrix :: Matrix -> Matrix
 quantizeMatrix (Matrix vectors) = QuantizedMatrix (map quantize vectors)
 quantizeMatrix _ = error "unsupported case in quantizeMatrix"
 
-
-
-
-
-
-
+matMul :: Matrix -> Matrix -> Matrix
+--matMul x y | trace ("multiplying: " ++ formatShortMatrix x ++ " * " ++ formatShortMatrix y ++ ", num ops = " ++ show (height x * width x * width y) ++ ", num vec ops = " ++ show (width x * width y)) False = undefined
+matMul x y | height x /= height y = error $ "matrix heights don't match:\n" ++
+             "x size is: [" ++ show (height x) ++ " x " ++ show (width x) ++ "]\n" ++
+             "y size is: [" ++ show (height y) ++ " x " ++ show (width y) ++ "]\n" ++
+             show (height x) ++ " /= " ++ show (height y)
+matMul x@(Matrix xVals) (Matrix yVals) | height x < width x =
+  Matrix $ map (\yRow -> map (\xCol -> xCol `slowDot` yRow) xVals) yVals
+matMul x@(Matrix _) y@(Matrix _) =
+  Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
+matMul x@(QuantizedMatrix _) y@(Matrix _) =
+  Matrix $ map (\yRow -> map (\xCol -> xCol `quantized_vector_dot` yRow) $ qMatrixVectors x) $ qMatrixVectors $ quantizeMatrix y
+matMul _ _ = error "unsupported case called in matMul"
