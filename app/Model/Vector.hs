@@ -4,15 +4,12 @@
 
 module Model.Vector (
   Vector,
-  QuantizedBlock(..),
   QuantizedVector(..),
-  UnpackedQuantizedVector,
   bytesToFloats,
   tensorToVector,
   quantizedVectorLength,
   quantize,
   dequantize,
-  unpackedQuantizedVectorToByteString,
   dot,
   zipFold,
   slowDot,

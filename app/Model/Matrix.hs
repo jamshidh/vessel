@@ -9,7 +9,7 @@ module Model.Matrix (
   width,
   height,
   tensorToMatrix,
-  quantizeMatrix,
+  getRow,
   matMul
   ) where
 
@@ -30,10 +30,6 @@ import Format
 
 data Matrix = Matrix [Vector] |
               QuantizedMatrix [QuantizedVector] deriving (Generic, NFData)
-
---unMatrix :: Matrix -> [[Float]]
---unMatrix (Matrix m) = m
---unMatrix (QuantizedMatrix _) = error "unMatrix not defined for QuantizedMatrix"
 
 matrixVectors :: Matrix -> [Vector]
 matrixVectors (Matrix vectors) = vectors
@@ -102,6 +98,11 @@ byteStringChunksOf i s = first:byteStringChunksOf i rest
 quantizeMatrix :: Matrix -> Matrix
 quantizeMatrix (Matrix vectors) = QuantizedMatrix (map quantize vectors)
 quantizeMatrix _ = error "unsupported case in quantizeMatrix"
+
+getRow :: Matrix -> Int -> Vector
+--getRow m i | trace ("getRow: " ++ format m ++ " " ++ show i) False = undefined
+getRow (QuantizedMatrix matrixData) i = dequantize $ matrixData !!  i 
+getRow _ _ = error "getRow not definted for non-quantized Matrix"
 
 matMul :: Matrix -> Matrix -> Matrix
 --matMul x y | trace ("multiplying: " ++ formatShortMatrix x ++ " * " ++ formatShortMatrix y ++ ", num ops = " ++ show (height x * width x * width y) ++ ", num vec ops = " ++ show (width x * width y)) False = undefined

@@ -26,7 +26,6 @@ import Format
 import Model.Float ()
 import Model.Matrix
 import Model.Model
-import Model.Tensor
 import Model.Token
 import Model.Vector
 import Rope
