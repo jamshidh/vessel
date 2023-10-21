@@ -11,17 +11,13 @@ import Control.Monad.IO.Class
 import qualified Control.Monad.Trans.State as State
 import Data.Binary
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
 import Data.IORef
 import Data.List (sortOn, transpose)
 import Data.List.Split
-import qualified Data.Vector.Storable as V
-import Foreign.C.String
 import Numeric.Half
 import System.IO
-import System.IO.Unsafe
 
 import Converse
 
@@ -328,53 +324,8 @@ matMul x@(Matrix xVals) (Matrix yVals) | height x < width x =
 matMul x@(Matrix _) y@(Matrix _) =
   Matrix $ map (\yRow -> map (\xCol -> xCol `dot` yRow) $ matrixVectors x) $ matrixVectors y
 matMul x@(QuantizedMatrix _) y@(Matrix _) =
-  Matrix $ map (\yRow -> map (\xCol -> xCol `qdot` yRow) $ qMatrixVectors x) $ qMatrixVectors $ quantizeMatrix y
+  Matrix $ map (\yRow -> map (\xCol -> xCol `quantized_vector_dot` yRow) $ qMatrixVectors x) $ qMatrixVectors $ quantizeMatrix y
 matMul _ _ = error "unsupported case called in matMul"
-
-slowDot :: [Float] -> [Float] -> Float
---slowDot x y = realToFrac $ sum $ zipWith (*) (map realToFrac x) (map realToFrac y :: [Double])
---slowDot x y = sum $ zipWith (*) x y
-
-slowDot x y = zipFold (\v1 v2 s -> fusionMultiplySumAllFloat v1 v2 s) (0.0::Float) x y
-
-dot :: Vector -> Vector -> Float
---dot x y | trace ("dot, length x = " ++ show (length x) ++ ", length y = " ++ show (length y)) False = undefined
-dot x y | length x /= length y = error $ "dot product lengths do not match: " ++ show (length x) ++ "/=" ++ show (length y)
-dot x y = realToFrac $ zipFold fusionMultiplySum (0.0::Double) x y
-  --sum $ zipWith (*) (map realToFrac x::[Double]) (map realToFrac y::[Double])
-
-
-
-qdot :: QuantizedVector -> QuantizedVector -> Float
-qdot (QuantizedVector x) (QuantizedVector y) = x `quantized_vector_dot` y
-
-
-
-
-
-zipFold :: (a -> b -> c -> c) -> c -> [a] -> [b] -> c
-zipFold _ initVal [] [] = initVal
-zipFold f initVal (firstx:restx) (firsty:resty) =
-  let newVal = f firstx firsty initVal
-  in zipFold f newVal restx resty
-zipFold _ _ _ _ = error "mismatched array sizes in call to zipFold"
-
-foreign import ccall "fusionMultiplySum" fusionMultiplySum :: Float -> Float -> Double -> Double
-foreign import ccall "fusionMultiplySumAllFloat" fusionMultiplySumAllFloat :: Float -> Float -> Float -> Float
-
-foreign import ccall "vector_dot" vector_dot :: Int -> CString -> CString -> Float
-
-quantized_vector_dot :: UnpackedQuantizedVector -> UnpackedQuantizedVector -> Float
---quantized_block_dot (QuantizedBlock f1 n1) (QuantizedBlock f2 n2) | trace ("f1 = " ++ format f1 ++ ", f2 = " ++ format f2 ++ ", n1 = " ++ show n1 ++ ", n2 = " ++ show n2 ++ ", int dot = " ++ show (sum $ zipWith (*) n1 n2)) False = undefined
-quantized_vector_dot v1 v2 | V.length v1 /= V.length v2 = error "vector lengths different in call to quantized_vector_dot"
-quantized_vector_dot v1 v2 =
-  let bytes1 = unpackedQuantizedVectorToByteString v1
-      bytes2 = unpackedQuantizedVectorToByteString v2
-  in unsafePerformIO $
-  B.useAsCStringLen bytes1 $ \(p1, _) ->
-  B.useAsCStringLen bytes2 $ \(p2, _) ->
-                      return $ vector_dot (V.length v1) p1 p2
-
 
 {-
 --quantized_block_dot (QuantizedBlock f1 ints1) (QuantizedBlock f2 ints2) = --traceItem "quantized_block_dot" $ 

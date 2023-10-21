@@ -13,7 +13,11 @@ module Model.Vector (
   quantize,
   dequantize,
   unpackedQuantizedVectorToByteString,
-  byteStringToQuantizedVector
+  dot,
+  zipFold,
+  slowDot,
+  quantized_vector_dot,
+  fusionMultiplySum
   ) where
 
 import Control.DeepSeq
@@ -24,6 +28,7 @@ import Data.List.Split
 import qualified Data.Vector.Storable as V
 import Data.Word
 import Foreign
+import Foreign.C.String
 import GHC.Generics
 import System.IO.Unsafe
 
@@ -37,17 +42,17 @@ type Vector = [Float]
 
 type UnpackedQuantizedVector = V.Vector QuantizedBlock
 
-data QuantizedVector = QuantizedVector (V.Vector QuantizedBlock) deriving (Show, Generic, NFData)
+data QuantizedVector = QuantizedVector ByteString deriving (Show, Generic, NFData)
 
 --instance Format Vector where
 --  format x = "[" ++ show (length x) ++ "]\n"
 --                      ++ show (take 10 x)
 
 instance Format QuantizedVector where                      
-  format (QuantizedVector theData) = "QuantizedVector [" ++ show (V.length theData * 32) ++ "]"
+  format v = "QuantizedVector [" ++ show (quantizedVectorLength v) ++ "]"
 
 quantizedVectorLength :: QuantizedVector -> Int
-quantizedVectorLength (QuantizedVector x) = 32 * V.length x
+quantizedVectorLength (QuantizedVector x) = 32 * B.length x `div` 20
 
 
 data QuantizedBlock = QuantizedBlock Float Int4X32 deriving (Show)
@@ -88,10 +93,10 @@ quantize_single_block floats =
 
 quantize :: Vector -> QuantizedVector
 --quantize x | trace ("quantizing: " ++ show (length x)) False = undefined
-quantize floats = QuantizedVector $ V.fromList $ map quantize_single_block $ chunksOf 32 floats
+quantize floats = QuantizedVector $ unpackedQuantizedVectorToByteString $ V.fromList $ map quantize_single_block $ chunksOf 32 floats
 
 dequantize :: QuantizedVector -> Vector
-dequantize quantizedVector = concat . map quantizedBlockToFloats . V.toList . (\(QuantizedVector v) -> v) $ quantizedVector
+dequantize (QuantizedVector bytes) = concat . map quantizedBlockToFloats . V.toList $ byteStringToUnpackedQuantizedBlocks bytes
 
 
 
@@ -102,9 +107,6 @@ unpackedQuantizedVectorToByteString v =
     unsafePerformIO $
     withForeignPtr p $ \p' -> 
                          B.packCStringLen (castPtr p', l * sizeOf (undefined :: QuantizedBlock))
-
-byteStringToQuantizedVector :: ByteString -> QuantizedVector
-byteStringToQuantizedVector = QuantizedVector . byteStringToUnpackedQuantizedBlocks
 
 byteStringToUnpackedQuantizedBlocks :: ByteString -> UnpackedQuantizedVector
 byteStringToUnpackedQuantizedBlocks theData = V.fromList $ map parseQuantizedBlock $ splitIntoBlocks theData
@@ -119,5 +121,39 @@ byteStringToUnpackedQuantizedBlocks theData = V.fromList $ map parseQuantizedBlo
     splitIntoBlocks x | B.length x == 0 = []
     splitIntoBlocks x = first:splitIntoBlocks rest
       where (first, rest) = B.splitAt 20 x
+
+zipFold :: (a -> b -> c -> c) -> c -> [a] -> [b] -> c
+zipFold _ initVal [] [] = initVal
+zipFold f initVal (firstx:restx) (firsty:resty) =
+  let newVal = f firstx firsty initVal
+  in zipFold f newVal restx resty
+zipFold _ _ _ _ = error "mismatched array sizes in call to zipFold"
+
+foreign import ccall "fusionMultiplySum" fusionMultiplySum :: Float -> Float -> Double -> Double
+foreign import ccall "fusionMultiplySumAllFloat" fusionMultiplySumAllFloat :: Float -> Float -> Float -> Float
+
+foreign import ccall "vector_dot" vector_dot :: Int -> CString -> CString -> Float
+
+
+slowDot :: [Float] -> [Float] -> Float
+--slowDot x y = realToFrac $ sum $ zipWith (*) (map realToFrac x) (map realToFrac y :: [Double])
+--slowDot x y = sum $ zipWith (*) x y
+
+slowDot x y = zipFold (\v1 v2 s -> fusionMultiplySumAllFloat v1 v2 s) (0.0::Float) x y
+
+dot :: Vector -> Vector -> Float
+--dot x y | trace ("dot, length x = " ++ show (length x) ++ ", length y = " ++ show (length y)) False = undefined
+dot x y | length x /= length y = error $ "dot product lengths do not match: " ++ show (length x) ++ "/=" ++ show (length y)
+dot x y = realToFrac $ zipFold fusionMultiplySum (0.0::Double) x y
+  --sum $ zipWith (*) (map realToFrac x::[Double]) (map realToFrac y::[Double])
+
+quantized_vector_dot :: QuantizedVector -> QuantizedVector -> Float
+--quantized_block_dot (QuantizedBlock f1 n1) (QuantizedBlock f2 n2) | trace ("f1 = " ++ format f1 ++ ", f2 = " ++ format f2 ++ ", n1 = " ++ show n1 ++ ", n2 = " ++ show n2 ++ ", int dot = " ++ show (sum $ zipWith (*) n1 n2)) False = undefined
+quantized_vector_dot v1 v2 | quantizedVectorLength v1 /= quantizedVectorLength v2 = error "vector lengths different in call to quantized_vector_dot"
+quantized_vector_dot (QuantizedVector v1) (QuantizedVector v2) =
+  unsafePerformIO $
+  B.useAsCStringLen v1 $ \(p1, _) ->
+  B.useAsCStringLen v2 $ \(p2, _) ->
+                      return $ vector_dot (B.length v1 `div` 20) p1 p2
 
 

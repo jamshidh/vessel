@@ -76,7 +76,7 @@ tensorToMatrix t@GenericTensor{fType=F32} =
 tensorToMatrix t@GenericTensor{fType=Q4_0} = 
   let --width' = dim_num_elems t !! 1
       height' = dim_num_elems t !! 0
-  in QuantizedMatrix $ map byteStringToQuantizedVector $ byteStringChunksOf (fromIntegral height' * 20 `div` 32) $ elems t
+  in QuantizedMatrix $ map QuantizedVector $ byteStringChunksOf (fromIntegral height' * 20 `div` 32) $ elems t
 
 
 byteStringChunksOf :: Int -> ByteString -> [ByteString]
