@@ -19,6 +19,8 @@ executables:
   vessel-runner:
     main:                Main.hs
     source-dirs:         app
+    #cc-options: -DMAC
+    #cc-options: -DLINUX -mavx2
     c-sources:
       c-source/fastvector.c
     ghc-options:

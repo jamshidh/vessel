@@ -1,7 +1,5 @@
 
-//#define MAC
-
-#ifdef MAC
+#if defined(MAC)
 
 #include <Accelerate/Accelerate.h>
 
@@ -38,6 +36,14 @@ float dot_Int4X32(char *x, char *y) {
     return vaddvq_s32(p);
 
 }
+#elif defined(LINUX)
+
+#include <immintrin.h>
+#include <stdio.h>
+
+float dot_Int4X32(char *x, char *y) {
+}
+
 #else
 
 #include <stdio.h>
