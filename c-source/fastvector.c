@@ -40,8 +40,62 @@ float dot_Int4X32(char *x, char *y) {
 
 #include <immintrin.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <assert.h>
+
+
+static inline __m256i bytesFromNibbles( const uint8_t* rsi )
+{
+    // Load 16 bytes from memory
+    __m128i tmp = _mm_loadu_si128( ( const __m128i* )rsi );
+
+    // Expand bytes into uint16_t values
+    __m256i bytes = _mm256_cvtepu8_epi16( tmp );
+
+    // Unpack values into individual bytes
+    const __m256i lowMask = _mm256_set1_epi8( 0xF );
+    __m256i high = _mm256_andnot_si256( lowMask, bytes );
+    __m256i low = _mm256_and_si256( lowMask, bytes );
+    high = _mm256_slli_epi16( high, 4 );
+    bytes = _mm256_or_si256( low, high );
+    return bytes;
+}
 
 float dot_Int4X32(char *x, char *y) {
+  
+  // Load 16 bytes, and unpack 4 bit fields into bytes, making 32 bytes
+  __m256i x_bytes = bytesFromNibbles((uint8_t *) x);
+  __m256i y_bytes = bytesFromNibbles((uint8_t *) y);
+
+  // Now we have a vector with bytes in [ 0 .. 15 ] interval. Offset them into [ -8 .. +7 ] interval.
+  const __m256i off = _mm256_set1_epi8(8);
+  x_bytes = _mm256_sub_epi8(x_bytes, off);
+  y_bytes = _mm256_sub_epi8(y_bytes, off);
+
+  // Sign-extend first 16 signed bytes into int16_t
+  __m256i x16 = _mm256_cvtepi8_epi16( _mm256_castsi256_si128(x_bytes) );
+  __m256i y16 = _mm256_cvtepi8_epi16( _mm256_castsi256_si128(y_bytes) );
+
+  // Compute products of int16_t integers, add pairwise
+  __m256i i32 = _mm256_madd_epi16( x16, y16 );
+
+  // Sign-extend last 16 signed bytes into int16_t vectors
+  x16 = _mm256_cvtepi8_epi16( _mm256_extracti128_si256( x_bytes, 1 ) );
+  y16 = _mm256_cvtepi8_epi16( _mm256_extracti128_si256( y_bytes, 1 ) );
+  
+  // Accumulate products of int16_t integers
+  i32 = _mm256_add_epi32( i32, _mm256_madd_epi16( x16, y16 ) );
+
+  // Convert int32_t to float
+  __m256 p = _mm256_cvtepi32_ps( i32 );
+
+  __m128 res = _mm256_extractf128_ps( p, 1 );
+
+  res = _mm_add_ps( res, _mm256_castps256_ps128( p ) );
+  res = _mm_add_ps( res, _mm_movehl_ps( res, res ) );
+  res = _mm_add_ss( res, _mm_movehdup_ps( res ) );
+
+  return  _mm_cvtss_f32(res);
 }
 
 #else
